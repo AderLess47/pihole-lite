@@ -54,6 +54,12 @@ jobs:
     steps:
       - name: Werkzeuge
         run: |
+          # Bullseye ist auf deb.debian.org nicht mehr vollstaendig (die Security-Suite
+          # liefert 404 fuer die Pakete des Images), im Archiv liegt das ganze Release.
+          printf 'deb http://archive.debian.org/debian bullseye main\n' > /etc/apt/sources.list
+          rm -f /etc/apt/sources.list.d/*.list
+          printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "3";\n' \
+            > /etc/apt/apt.conf.d/99archive
           apt-get update
           apt-get install -y --no-install-recommends \
             ca-certificates curl git build-essential file \
