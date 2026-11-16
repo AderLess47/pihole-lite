@@ -42,8 +42,9 @@ RSS, nicht die QPS.
 
 ## Ergebnistabelle
 
-Der Lauf auf dem Pi schreibt `bench/out/ergebnis.md`; `bash bench/eintragen.sh`
-setzt diese Werte hier ein. Von Hand geht es auch.
+Der Lauf auf dem Pi schreibt `bench/out/ergebnis.md` und trägt die Werte am Ende
+selbst hier ein; `--no-eintragen` schaltet das ab. Nachträglich geht es mit
+`bash bench/eintragen.sh`. Von Hand geht es auch.
 
 <!-- messwerte:start -->
 | Lauf | Domains | RSS idle (MiB) | Peak idle (MiB) | RSS Last (MiB) | Peak Last (MiB) | QPS |
