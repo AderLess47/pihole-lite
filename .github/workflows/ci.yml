@@ -40,26 +40,38 @@ jobs:
   armv6:
     name: ARMv6 cross build
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
+    # Bullseye statt ubuntu-latest: dort ist die glibc 2.31, und gegen genau die wird
+    # gelinkt. Auf ubuntu-latest (glibc 2.39) entsteht ein Binary, das auf einem
+    # Raspberry Pi OS Bullseye/Bookworm mit "GLIBC_2.39 not found" nicht startet.
+    # glibc ist abwaertskompatibel, 2.31 laeuft auf allen neueren Zielsystemen.
+    container: debian:bullseye
     env:
+      CARGO_HOME: /usr/local/cargo
+      RUSTUP_HOME: /usr/local/rustup
       CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
+      PATH: /usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     steps:
+      - name: Werkzeuge
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates curl git build-essential file \
+            gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
+
       - name: Check out repository
         uses: actions/checkout@v4
 
       - name: Rust-Toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-          targets: arm-unknown-linux-gnueabihf
-
-      - name: Cross-Linker
-        run: sudo apt-get update && sudo apt-get install -y gcc-arm-linux-gnueabihf
+        run: |
+          curl -sSf https://sh.rustup.rs -o /tmp/rustup.sh
+          sh /tmp/rustup.sh -y --profile minimal --default-toolchain stable \
+            --component clippy --target arm-unknown-linux-gnueabihf
 
       - name: Cache
         uses: Swatinem/rust-cache@v2
         with:
-          key: armv6
+          key: armv6-bullseye
 
       # Zielabhaengige Warnungen (z. B. bedingte Kompilierung, Layout-Annahmen
       # auf 32 Bit) tauchen im x86-Lauf nicht auf.
@@ -69,8 +81,18 @@ jobs:
       - name: Release-Build
         run: cargo build --release --target arm-unknown-linux-gnueabihf
 
+      # Das Binary wird auf fremden Systemen gestartet, deshalb hier hart pruefen:
+      # kein GLIBC-Symbol darf neuer als die Baseline 2.31 sein.
       - name: Artefakt pruefen
-        run: file target/arm-unknown-linux-gnueabihf/release/pihole-lite
+        run: |
+          file target/arm-unknown-linux-gnueabihf/release/pihole-lite
+          needed=$(strings -a target/arm-unknown-linux-gnueabihf/release/pihole-lite \
+            | grep -o 'GLIBC_[0-9.]*' | sed 's/^GLIBC_//' | sort -uV | tail -1)
+          echo "hoechste benoetigte glibc: $needed"
+          if [ "$(printf '%s\n' 2.31 "$needed" | sort -V | tail -1)" != "2.31" ]; then
+            echo "::error::Binary verlangt glibc $needed (> 2.31) und startet auf Raspberry Pi OS nicht"
+            exit 1
+          fi
 
       # Flach paketieren, damit der Download ohne Zielbaum ankommt.
       - name: Paketieren
