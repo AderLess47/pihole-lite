@@ -69,3 +69,19 @@ jobs:
 
       - name: Artefakt pruefen
         run: file target/arm-unknown-linux-gnueabihf/release/pihole-lite
+
+      # Flach paketieren, damit der Download ohne Zielbaum ankommt.
+      - name: Paketieren
+        run: |
+          cp target/arm-unknown-linux-gnueabihf/release/pihole-lite pihole-lite-armv6
+          sha256sum pihole-lite-armv6 > pihole-lite-armv6.sha256
+
+      - name: Artefakt hochladen
+        uses: actions/upload-artifact@v4
+        with:
+          name: pihole-lite-armv6
+          path: |
+            pihole-lite-armv6
+            pihole-lite-armv6.sha256
+          if-no-files-found: error
+          retention-days: 30
