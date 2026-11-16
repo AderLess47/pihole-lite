@@ -325,83 +325,25 @@ impl GravityUpdater {
             tokio::time::sleep(self.config.interval).await;
         }
     }
+}
 
-    /// Holt eine Remote-Quelle und schreibt sie ins Backend (und in den Cache).
-    async fn refresh_source(
-        &self,
-        url: &str,
-        backend: &mut dyn FilterBackend,
-        totals: &mut Totals,
-    ) -> Result<(), GravityError> {
-        if url.starts_with("http://") {
-            let cached = self.cache.open_list(url).await;
-            // Nur mit einer frischen Cache-Liste revalidieren. Ist sie zu alt, gehen
-            // keine Conditional Header raus und der Server liefert den vollen Body.
-            let validators = match &cached {
-                CachedList::Fresh(_) => self.cache.validators(url).await,
-                CachedList::Stale { age } => {
-                    eprintln!(
-                        "[gravity] {url}: cache ist {} alt, wird vollständig neu geladen",
-                        fmt_age(*age)
-                    );
-                    None
-                }
-                CachedList::Missing => None,
-            };
-            let (mut reader, head) = open_http(url, validators.as_ref()).await?;
+include!("gravity_parts/updater_sources.rs");
+include!("gravity_parts/source.rs");
+include!("gravity_parts/stream.rs");
+include!("gravity_parts/cache.rs");
+include!("gravity_parts/http.rs");
 
-            if head.status == 304 {
-                let CachedList::Fresh(file) = cached else {
-                    return Err(GravityError::Http {
-                        url: url.to_owned(),
-                        reason: "304 ohne frischen cache".to_owned(),
-                    });
-                };
-                let mut cached = BufReader::new(file);
-                let mut sink = CacheSink::disabled();
-                self.timed_read(&mut cached, backend, totals, url, &mut sink)
-                    .await?;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::profiler::Tier;
+    use std::net::SocketAddr;
+    use std::sync::Mutex;
+    use tokio::io::AsyncReadExt;
+    use tokio::net::TcpListener;
 
-                let fresh = head.validators();
-                if !fresh.is_empty() {
-                    if let Err(err) = self.cache.store_validators(url, &fresh).await {
-                        eprintln!("[gravity] {url}: validatoren nicht speicherbar: {err}");
-                    }
-                }
-                if self.config.verbose {
-                    eprintln!("[gravity] {url}: 304 not modified, cache verwendet");
-                }
-                return Ok(());
-            }
-
-            if !(200..300).contains(&head.status) {
-                return Err(GravityError::Http {
-                    url: url.to_owned(),
-                    reason: format!("HTTP status {}", head.status),
-                });
-            }
-
-            self.stream_into_backend(&mut reader, backend, totals, url)
-                .await?;
-
-            let fresh = head.validators();
-            if !fresh.is_empty() {
-                if let Err(err) = self.cache.store_validators(url, &fresh).await {
-                    eprintln!("[gravity] {url}: validatoren nicht speicherbar: {err}");
-                }
-            }
-            return Ok(());
-        }
-
-        if url.starts_with("https://") {
-            // Bewusst ohne Conditional Request: der Fetcher liefert keine Statuszeile,
-            // eine leere 304-Antwort wäre sonst von einer leeren Liste nicht zu trennen.
-            let mut source = self.open_via_fetcher(url).await?;
-            self.stream_into_backend(source.reader(), backend, totals, url)
-                .await?;
-            source.finish(url).await?;
-            return Ok(());
-        }
-
-        Err(GravityError::UnsupportedScheme(url.to_owned()))
-    }
+    include!("gravity_parts/tests_helpers.rs");
+    include!("gravity_parts/tests_http.rs");
+    include!("gravity_parts/tests_cache.rs");
+    include!("gravity_parts/tests_update.rs");
+}
