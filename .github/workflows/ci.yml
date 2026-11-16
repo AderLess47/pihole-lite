@@ -121,16 +121,37 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
       - name: Artefakt holen
         uses: actions/download-artifact@v4
         with:
           name: pihole-lite-armv6
 
+      # Die Release-Beschreibung kommt aus dem Changelog: kuratiert, abschaltbar
+      # und ohne die doppelte "Full Changelog"-Zeile, die generate_release_notes
+      # bei einem zweiten Lauf anhaengt.
+      - name: Release-Notizen aus dem Changelog
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$version" '
+            index($0, "## [" ver "]") == 1 { capture = 1; next }
+            capture && /^## \[/ { exit }
+            capture && /^\[[^]]+\]:/ { exit }
+            capture { print }
+          ' CHANGELOG.md > RELEASE_NOTES.md
+          if ! grep -q '[^[:space:]]' RELEASE_NOTES.md; then
+            echo "::error::CHANGELOG.md hat keinen Abschnitt fuer $version"
+            exit 1
+          fi
+          cat RELEASE_NOTES.md
+
       - name: Release veroeffentlichen
         uses: softprops/action-gh-release@v2
         with:
+          body_path: RELEASE_NOTES.md
           files: |
             pihole-lite-armv6
             pihole-lite-armv6.sha256
           fail_on_unmatched_files: true
-          generate_release_notes: true
