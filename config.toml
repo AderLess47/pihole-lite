@@ -1,0 +1,60 @@
+# pihole-lite – optionale Overrides.
+# Jeder Key ist optional; fehlende Keys fallen auf die Defaults zurück.
+# CLI-Flags (--listen, --upstream, --blocklist-file, --verbose) überschreiben diese Datei.
+
+# UDP-Listener. Port 53 benötigt root oder CAP_NET_BIND_SERVICE.
+listen = "0.0.0.0:53"
+
+# Upstream-Resolver, in dieser Reihenfolge probiert (der erste gültige Antwort gewinnt).
+upstream = ["1.1.1.1:53", "9.9.9.9:53"]
+
+# Antwort auf geblockte Queries: "zero" (A -> 0.0.0.0, AAAA -> ::) oder "nxdomain".
+sinkhole = "zero"
+sinkhole_ttl = 60
+
+# Timeout pro Upstream-Versuch.
+upstream_timeout_ms = 2000
+
+# Einträge im DNS-Antwort-Cache (LRU, TTL-basiert). 0 = aus dem Hardware-Tier
+# (Tier 1: 512, Tier 2: 4096, Tier 3: 16384).
+# cache_entries = 4096
+
+# Minimal-HTTP-API (GET /api/stats, GET /api/disable?seconds=300).
+# Nur lokal binden: der Disable-Switch hat keine Authentifizierung.
+# Leer ("") schaltet die API ab.
+api_listen = "127.0.0.1:8080"
+
+# Lokale Blockliste im Hosts-Format oder eine Domain pro Zeile.
+# Wird zeilenweise gestreamt – die Datei liegt nie komplett im RAM.
+# blocklist_file = "./blocklist.txt"
+
+# Inline-Domains für kleine Ausnahmen oder Tests.
+# block = ["ads.example.com", "tracker.example.net"]
+
+# Remote-Blocklisten für den Gravity-Updater. Werden zeilenweise gestreamt und nach
+# dem Download atomar gegen den laufenden Bestand getauscht.
+# https:// wird durch einen externen Fetcher geholt (siehe `fetcher`), http:// nativ.
+# blocklist = ["https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts"]
+
+# Update-Intervall in Stunden. 0 = nur einmal beim Start.
+gravity_interval_hours = 24
+
+# Gesamt-Timeout pro Quelle in Sekunden.
+gravity_timeout_seconds = 300
+
+# Platten-Cache: pro Quelle eine Liste plus ETag/Last-Modified. Beim Start wird daraus
+# sofort gefiltert, und http-Quellen werden per Conditional GET (304) revalidiert.
+# Listen, die zu keiner konfigurierten URL mehr gehören, werden beim erfolgreichen
+# Update entfernt. "" schaltet die Persistenz ab.
+gravity_cache_dir = "./gravity-cache"
+
+# Maximalalter einer Cache-Liste in Stunden. Ältere Listen werden beim Start nicht
+# geladen und nicht revalidiert, sondern vollständig neu heruntergeladen. 0 = unbegrenzt.
+gravity_cache_max_age_hours = 168
+
+# Fetcher-Befehl für https-Quellen. `{url}` wird ersetzt, sonst wird die URL angehängt.
+# Default: "curl -fsSL --max-time 120"
+# fetcher = "curl -fsSL --max-time 120"
+
+# Pro-Query-Logging auf stderr. Auf einem Pi 1 aus lassen.
+verbose = false

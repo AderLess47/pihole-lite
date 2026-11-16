@@ -1,0 +1,31 @@
+[package]
+name = "pihole-lite"
+version = "0.1.0"
+edition = "2021"
+description = "Ressourcenschonender DNS-Sinkhole-Server für ARMv6 / 256 MB RAM und größer"
+license = "MIT"
+publish = false
+
+[dependencies]
+# Nur die tatsächlich benötigten Features: jede zusätzliche Feature-Schicht
+# landet als Code im Binary und damit im RSS eines Pi 1.
+tokio = { version = "1", default-features = false, features = [
+    "rt-multi-thread",
+    "net",
+    "macros",
+    "io-util",
+    "fs",
+    "sync",
+    "time",
+    "signal",
+    "process",
+] }
+simple-dns = "0.13"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
