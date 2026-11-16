@@ -3,20 +3,22 @@
 #
 # Vergleicht zwei Läufe mit identischer Konfiguration: ohne Blockliste und mit
 # einer generierten Liste aus 100k Domains. Schreibt Tabelle und Umgebung nach
-# bench/out/.
+# bench/out/ und trägt die Tabelle danach in docs/messungen.md ein.
 #
-#   bash bench/messung.sh                      # Standard: Release-Build, 10 s Last
+#   bash bench/messung.sh                  # Standard: Release-Build, 10 s Last
 #   bash bench/messung.sh --seconds 5 --threads 4
-#   bash bench/messung.sh --binary /usr/local/bin/pihole-lite --out /tmp/messung
+#   bash bench/messung.sh --no-eintragen   # docs/messungen.md unverändert lassen
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+HERE="$(cd "$(dirname "$0")" && pwd)"
+cd "$HERE/.."
 
 BINARY="target/release/pihole-lite"
 OUT="bench/out"
 RUN_SECONDS=10
 THREADS=8
 DOMAINS=100000
+EINTRAGEN=1
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -25,10 +27,16 @@ while [ $# -gt 0 ]; do
         --seconds) RUN_SECONDS="$2"; shift 2 ;;
         --threads) THREADS="$2"; shift 2 ;;
         --domains) DOMAINS="$2"; shift 2 ;;
-        -h|--help) sed -n '2,11p' "$0"; exit 0 ;;
+        --no-eintragen) EINTRAGEN=0; shift ;;
+        -h|--help) sed -n '2,10p' "$HERE/messung.sh"; exit 0 ;;
         *) echo "unbekanntes argument: $1" >&2; exit 2 ;;
     esac
 done
+
+case "$OUT" in
+    /*) ERGEBNIS="$OUT/ergebnis.md" ;;
+    *) ERGEBNIS="$PWD/$OUT/ergebnis.md" ;;
+esac
 
 mkdir -p "$OUT"
 
@@ -150,3 +158,13 @@ measure "100k Domains (Sinkhole)" "$FULL_LIST"
 
 echo
 echo "[messung] Rohergebnisse: $OUT/"
+
+if [ "$EINTRAGEN" -eq 1 ]; then
+    if bash "$HERE/eintragen.sh" "$ERGEBNIS"; then
+        echo "[messung] Tabelle in docs/messungen.md aktualisiert"
+    else
+        echo "[messung] docs/messungen.md nicht aktualisiert — werte stehen in $OUT/ergebnis.md" >&2
+    fi
+else
+    echo "[messung] --no-eintragen: docs/messungen.md unverändert"
+fi
