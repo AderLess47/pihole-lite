@@ -115,8 +115,9 @@ ssh -L 8080:127.0.0.1:8080 pi@192.168.1.2
 
 Konfigurationsschlüssel stehen in [`docs/konfiguration.md`](docs/konfiguration.md),
 Betrieb, Selbstbau und Release-Ablauf in [`docs/betrieb.md`](docs/betrieb.md); die
-kommentierte Vorlage ist [`config.toml`](config.toml).
+kommentierte Vorlage ist [`config.toml`](config.toml). Was sich zwischen Versionen
+ändert, steht im [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Lizenz
 
-MIT (siehe `license` in `Cargo.toml`).
+MIT, siehe [`LICENSE`](LICENSE).
