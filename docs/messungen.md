@@ -42,12 +42,15 @@ RSS, nicht die QPS.
 
 ## Ergebnistabelle
 
-Auf dem Pi ausfüllen und hier ablegen:
+Der Lauf auf dem Pi schreibt `bench/out/ergebnis.md`; `bash bench/eintragen.sh`
+setzt diese Werte hier ein. Von Hand geht es auch.
 
-| Lauf | Domains | RSS idle (MiB) | Peak (MiB) | RSS Last (MiB) | QPS |
-|---|---|---|---|---|---|
-| Weiterleitung (leere Liste) | 0 | — | — | — | — |
-| 100k Domains (Sinkhole) | 100.000 | — | — | — | — |
+<!-- messwerte:start -->
+| Lauf | Domains | RSS idle (MiB) | Peak idle (MiB) | RSS Last (MiB) | Peak Last (MiB) | QPS |
+|---|---|---|---|---|---|---|
+| Weiterleitung (leere Liste) | 0 | — | — | — | — | — |
+| 100k Domains (Sinkhole) | 100.000 | — | — | — | — | — |
+<!-- messwerte:end -->
 
 Dazu gehören immer: Pi-Modell und RAM, `uname -srm`, glibc-Version, Kernel,
 `gpu_mem`-Einstellung und ob der Lauf gedrosselt wurde (`vcgencmd get_throttled`).
