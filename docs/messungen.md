@@ -1,7 +1,7 @@
 # Messungen
 
 Die Zusage des Projekts â€” unter 15 MB RSS auf einem Pi 1 mit 256 MB â€” ist nur so
-viel wert vie die Zahl, die sie belegt. Dieses Protokoll erzeugt diese Zahl
+viel wert wie die Zahl, die sie belegt. Dieses Protokoll erzeugt diese Zahl
 reproduzierbar: ein Lauf ohne Blockliste, ein Lauf mit 100.000 Domains, gleiche
 Konfiguration, gleiches Binary.
 
@@ -15,7 +15,7 @@ bash bench/messung.sh --seconds 30 --threads 8
 ```
 
 Das Skript baut bei Bedarf `target/release/pihole-lite`, kompiliert den
-Lastgenerator `bench/loadgen.rs` (nur `std`, keine AbğêP8digkeiten), erzeugt beide
+Lastgenerator `bench/loadgen.rs` (nur `std`, keine AbhÃ¤ngigkeiten), erzeugt beide
 Listen, startet den Server auf `127.0.0.1:5353` mit API auf `127.0.0.1:18080`,
 misst und beendet ihn wieder. Ergebnisse landen in `bench/out/ergebnis.md`, die
 Rohdaten daneben.
