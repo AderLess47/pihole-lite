@@ -31,3 +31,35 @@ jobs:
 
       - name: Tests
         run: cargo test
+
+  # Zielhost ist ein Raspberry Pi 1 (ARM1176, ARMv6, hard-float). Ein x86-Build
+  # prueft weder Feature-Set noch Linker, deshalb hier ein echter Cross-Build
+  # gegen arm-unknown-linux-gnueabihf mit dem Release-Profil.
+  armv6:
+    name: ARMv6 cross build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Rust-Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: arm-unknown-linux-gnueabihf
+
+      - name: Cross-Linker
+        run: sudo apt-get update && sudo apt-get install -y gcc-arm-linux-gnueabihf
+
+      - name: Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: armv6
+
+      - name: Release-Build
+        run: cargo build --release --target arm-unknown-linux-gnueabihf
+
+      - name: Artefakt pruefen
+        run: file target/arm-unknown-linux-gnueabihf/release/pihole-lite
