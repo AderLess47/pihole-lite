@@ -41,11 +41,11 @@ jobs:
     name: ARMv6 cross build
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Bullseye statt ubuntu-latest: dort ist die glibc 2.31, und gegen genau die wird
+    # Bookworm statt ubuntu-latest: dort ist die glibc 2.36, und gegen genau die wird
     # gelinkt. Auf ubuntu-latest (glibc 2.39) entsteht ein Binary, das auf einem
-    # Raspberry Pi OS Bullseye/Bookworm mit "GLIBC_2.39 not found" nicht startet.
-    # glibc ist abwaertskompatibel, 2.31 laeuft auf allen neueren Zielsystemen.
-    container: debian:bullseye
+    # Raspberry Pi OS mit "GLIBC_2.39 not found" nicht startet. Bookworm ist das
+    # Debian, auf dem auch das 32-Bit-Image fuer Pi 1/Zero basiert.
+    container: debian:bookworm
     env:
       CARGO_HOME: /usr/local/cargo
       RUSTUP_HOME: /usr/local/rustup
@@ -54,12 +54,6 @@ jobs:
     steps:
       - name: Werkzeuge
         run: |
-          # Bullseye ist auf deb.debian.org nicht mehr vollstaendig (die Security-Suite
-          # liefert 404 fuer die Pakete des Images), im Archiv liegt das ganze Release.
-          printf 'deb http://archive.debian.org/debian bullseye main\n' > /etc/apt/sources.list
-          rm -f /etc/apt/sources.list.d/*.list
-          printf 'Acquire::Check-Valid-Until "false";\nAcquire::Retries "3";\n' \
-            > /etc/apt/apt.conf.d/99archive
           apt-get update
           apt-get install -y --no-install-recommends \
             ca-certificates curl git build-essential file \
@@ -77,7 +71,7 @@ jobs:
       - name: Cache
         uses: Swatinem/rust-cache@v2
         with:
-          key: armv6-bullseye
+          key: armv6-bookworm
 
       # Zielabhaengige Warnungen (z. B. bedingte Kompilierung, Layout-Annahmen
       # auf 32 Bit) tauchen im x86-Lauf nicht auf.
@@ -88,15 +82,15 @@ jobs:
         run: cargo build --release --target arm-unknown-linux-gnueabihf
 
       # Das Binary wird auf fremden Systemen gestartet, deshalb hier hart pruefen:
-      # kein GLIBC-Symbol darf neuer als die Baseline 2.31 sein.
+      # kein GLIBC-Symbol darf neuer als die Baseline 2.36 sein.
       - name: Artefakt pruefen
         run: |
           file target/arm-unknown-linux-gnueabihf/release/pihole-lite
           needed=$(strings -a target/arm-unknown-linux-gnueabihf/release/pihole-lite \
             | grep -o 'GLIBC_[0-9.]*' | sed 's/^GLIBC_//' | sort -uV | tail -1)
           echo "hoechste benoetigte glibc: $needed"
-          if [ "$(printf '%s\n' 2.31 "$needed" | sort -V | tail -1)" != "2.31" ]; then
-            echo "::error::Binary verlangt glibc $needed (> 2.31) und startet auf Raspberry Pi OS nicht"
+          if [ "$(printf '%s\n' 2.36 "$needed" | sort -V | tail -1)" != "2.36" ]; then
+            echo "::error::Binary verlangt glibc $needed (> 2.36) und startet auf Raspberry Pi OS nicht"
             exit 1
           fi
 
