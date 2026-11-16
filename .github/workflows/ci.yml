@@ -5,6 +5,8 @@ on:
     branches:
       - main
       - "freebuff/**"
+    tags:
+      - "v*"
   pull_request:
   workflow_dispatch:
 
@@ -85,3 +87,28 @@ jobs:
             pihole-lite-armv6.sha256
           if-no-files-found: error
           retention-days: 30
+
+  # Ein Tag haengt das fertige Pi-Binary dauerhaft an das Release, statt es
+  # nach 30 Tagen mit dem Workflow-Artefakt verfallen zu lassen.
+  release:
+    name: Release (tag)
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: armv6
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Artefakt holen
+        uses: actions/download-artifact@v4
+        with:
+          name: pihole-lite-armv6
+
+      - name: Release veroeffentlichen
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            pihole-lite-armv6
+            pihole-lite-armv6.sha256
+          fail_on_unmatched_files: true
+          generate_release_notes: true
