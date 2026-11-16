@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pihole-lite – Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%2334d399'/%3E%3C/svg%3E">
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b1120;
+    --panel: #111a2e;
+    --panel-2: #16213a;
+    --line: #22314f;
+    --text: #e6edf7;
+    --muted: #8fa3c0;
+    --green: #34d399;
+    --red: #f87171;
+    --blue: #60a5fa;
+    --amber: #fbbf24;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.45;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--line);
+  }
+  h1 { margin: 0; font-size: 20px; letter-spacing: .2px; }
+  h1 span { color: var(--muted); font-weight: 400; font-size: 14px; margin-left: 8px; }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.ok { background: var(--green); box-shadow: 0 0 0 4px rgba(52, 211, 153, .15); }
+  .dot.err { background: var(--red); box-shadow: 0 0 0 4px rgba(248, 113, 113, .15); }
+  main { max-width: 1040px; margin: 0 auto; padding: 24px; }
+  [hidden] { display: none !important; }
+  .paused {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+    gap: 12px; margin-bottom: 20px; padding: 14px 18px; border-radius: 12px;
+    background: rgba(251, 191, 36, .1); border: 1px solid rgba(251, 191, 36, .35);
+    color: #fde68a; font-size: 14px;
+  }
+  .paused strong { color: #fff; }
+  .cards {
+    display: grid; gap: 12px; margin-bottom: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    padding: 14px 16px;
+  }
+  /* Labels sind einzelne, lange Wörter: bei Text-Zoom müssen sie brechen können,
+     sonst schieben sie die Seite horizontal auf. */
+  .card .label, .card .sub { overflow-wrap: anywhere; }
+  .card .label { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); hyphens: auto; }
+  .card .value { font-size: 26px; font-weight: 600; margin-top: 4px; font-variant-numeric: tabular-nums; }
+  .card .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .card.blocked .value { color: var(--red); }
+  .card.cached .value { color: var(--blue); }
+  .card.forwarded .value { color: var(--green); }
+  .card.errors .value { color: var(--amber); }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  button {
+    font: inherit; font-size: 13px; padding: 8px 14px; border-radius: 9px; cursor: pointer;
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+    transition: background .15s ease, border-color .15s ease;
+  }
+  button:hover { background: #1d2b49; border-color: #2f4570; }
+  button.primary { background: rgba(52, 211, 153, .14); border-color: rgba(52, 211, 153, .4); color: #a7f3d0; }
+  button.primary:hover { background: rgba(52, 211, 153, .22); }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+  .panel h2 { margin: 0; padding: 14px 16px; font-size: 14px; font-weight: 600; border-bottom: 1px solid var(--line); }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 16px; border-bottom: 1px solid rgba(34, 49, 79, .6); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+  tbody tr:last-child td { border-bottom: 0; }
+  tbody tr:hover { background: rgba(96, 165, 250, .05); }
+  td.mono, .mono { font-family: var(--mono); }
+  td.name { max-width: 420px; overflow: hidden; text-overflow: ellipsis; }
+  td.empty { color: var(--muted); text-align: center; padding: 22px; }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px;
+    font-weight: 600; letter-spacing: .02em;
+  }
+  .badge.blocked { background: rgba(248, 113, 113, .14); color: #fca5a5; }
+  .badge.cached { background: rgba(96, 165, 250, .14); color: #93c5fd; }
+  .badge.forwarded { background: rgba(52, 211, 153, .14); color: #6ee7b7; }
+  .badge.error { background: rgba(251, 191, 36, .14); color: #fcd34d; }
+  footer {
+    display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 18px;
+    font-size: 12px; color: var(--muted);
+  }
+  /* Flex-Items mit wrap schrumpfen nicht unter ihre Max-Content-Breite; ohne
+     Deckel schiebt ein langer Eintrag bei Text-Zoom die ganze Seite auf. */
+  footer span { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+  footer b { color: #cbd5e1; font-weight: 500; }
+  /* Bis 640 px dürfen Tabellenzellen umbrechen. Bei vergrößerter Schrift oder im
+     Querformat passt die Tabelle sonst nicht und die Status-Spalte läge außerhalb. */
+  @media (max-width: 640px) {
+    .panel th, .panel td { white-space: normal; }
+    .panel td.name { overflow-wrap: anywhere; }
+  }
+
+  /* Handys: die Tabelle wird zur Liste. Nebeneinander passen Alter, Domain, Typ
+     und Status nicht – erst recht nicht bei vergrößerter Schrift. */
+  @media (max-width: 480px) {
+    .panel thead { display: none; }
+    .panel table, .panel tbody, .panel tbody tr, .panel td { display: block; }
+    .panel tbody tr {
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px;
+      padding: 10px 14px; border-bottom: 1px solid rgba(34, 49, 79, .6);
+    }
+    .panel tbody tr:last-child { border-bottom: 0; }
+    .panel td { padding: 0; border: 0; white-space: normal; }
+    .panel td.age { order: 2; color: var(--muted); font-size: 12px; }
+    .panel td.name { order: 1; flex: 1 1 100%; max-width: none; overflow-wrap: anywhere; }
+    .panel td.qtype { order: 3; color: var(--muted); font-size: 12px; }
+    .panel td:last-child { order: 4; margin-left: auto; }
+    .panel td.empty { padding: 18px 0; }
+  }
+
+  /* Drei Spalten im Tablet-Bereich: fünf Karten ergeben 3 + 2 statt 4 + 1. */
+  @media (min-width: 561px) and (max-width: 900px) {
+    .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  }
+  @media (max-width: 560px) {
+    header, main { padding-left: 16px; padding-right: 16px; }
+    th, td { padding-left: 12px; padding-right: 12px; }
+    .card .value { font-size: 22px; }
+    /* Die fünfte Karte füllt die letzte Zeile, statt halb leer zu stehen. */
+    .cards .card:last-child { grid-column: 1 / -1; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>pihole-lite <span>DNS-Sinkhole</span></h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="connection">verbinde …</span></div>
+</header>
+
+<main>
+  <div class="paused" id="paused" hidden>
+    <span>Filter pausiert – noch <strong id="paused-left">–</strong>. Alle Domains werden aufgelöst.</span>
+    <button class="primary" data-seconds="0">Sofort aktivieren</button>
+  </div>
+
+  <section class="cards">
+    <div class="card">
+      <div class="label">Queries</div>
+      <div class="value" id="queries">–</div>
+      <div class="sub" id="uptime">Laufzeit –</div>
+    </div>
+    <div class="card blocked">
+      <div class="label">Geblockt</div>
+      <div class="value" id="blocked">–</div>
+      <div class="sub" id="blocked-pct">–</div>
+    </div>
+    <div class="card cached">
+      <div class="label">Cache</div>
+      <div class="value" id="cached">–</div>
+      <div class="sub" id="cached-pct">–</div>
+    </div>
+    <div class="card forwarded">
+      <div class="label">Weitergeleitet</div>
+      <div class="value" id="forwarded">–</div>
+      <div class="sub" id="forwarded-pct">–</div>
+    </div>
+    <div class="card errors">
+      <div class="label">Fehler</div>
+      <div class="value" id="errors">–</div>
+      <div class="sub" id="disabled">Filter aktiv</div>
+    </div>
+  </section>
+
+  <section class="actions">
+    <button data-seconds="60">1 min pausieren</button>
+    <button data-seconds="300">5 min pausieren</button>
+    <button data-seconds="1800">30 min pausieren</button>
+    <button class="primary" data-seconds="0">Filter aktivieren</button>
+  </section>
+
+  <section class="panel">
+    <h2>Letzte Anfragen</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Alter</th><th>Domain</th><th>Typ</th><th>Status</th></tr>
+        </thead>
+        <tbody id="recent"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer id="meta"></footer>
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  var QTYPE = { 1: "A", 2: "NS", 5: "CNAME", 6: "SOA", 12: "PTR", 15: "MX", 16: "TXT", 28: "AAAA", 33: "SRV", 65: "HTTPS" };
+  var LABEL = { blocked: "geblockt", cached: "cache", forwarded: "upstream", error: "fehler" };
+  var POLL_MS = 2000;
+
+  function el(id) { return document.getElementById(id); }
+
+  function formatCount(value) {
+    return typeof value === "number" ? value.toLocaleString("de-DE") : "–";
+  }
+
+  function formatDuration(totalSeconds) {
+    var seconds = Math.max(0, Math.floor(totalSeconds));
+    var days = Math.floor(seconds / 86400);
+    var hours = Math.floor((seconds % 86400) / 3600);
+    var minutes = Math.floor((seconds % 3600) / 60);
+    if (days > 0) return days + " d " + hours + " h";
+    if (hours > 0) return hours + " h " + minutes + " min";
+    if (minutes > 0) return minutes + " min " + (seconds % 60) + " s";
+    return seconds + " s";
+  }
+
+  function formatAge(seconds) {
+    if (seconds < 60) return Math.floor(seconds) + " s";
+    if (seconds < 3600) return Math.floor(seconds / 60) + " min";
+    return Math.floor(seconds / 3600) + " h";
+  }
+
+  function share(part, total) {
+    if (!total) return "0 %";
+    return Math.round((part / total) * 100) + " % der Queries";
+  }
+
+  function setConnection(ok, message) {
+    var dot = el("dot");
+    dot.className = "dot " + (ok ? "ok" : "err");
+    el("connection").textContent = ok ? "verbunden" : (message || "keine Verbindung");
+  }
+
+  function renderRecent(entries) {
+    var body = el("recent");
+    body.textContent = "";
+
+    if (!entries.length) {
+      var row = document.createElement("tr");
+      var cell = document.createElement("td");
+      cell.className = "empty";
+      cell.colSpan = 4;
+      cell.textContent = "Noch keine Anfragen.";
+      row.appendChild(cell);
+      body.appendChild(row);
+      return;
+    }
+
+    entries.forEach(function (entry) {
+      var row = document.createElement("tr");
+
+      var age = document.createElement("td");
+      age.className = "age mono";
+      age.textContent = formatAge(entry.age_s);
+
+      var name = document.createElement("td");
+      name.className = "name mono";
+      name.textContent = entry.name;
+
+      var qtype = document.createElement("td");
+      qtype.className = "qtype mono";
+      qtype.textContent = QTYPE[entry.qtype] || ("TYPE" + entry.qtype);
+
+      var status = document.createElement("td");
+      var badge = document.createElement("span");
+      badge.className = "badge " + (LABEL[entry.verdict] ? entry.verdict : "error");
+      badge.textContent = LABEL[entry.verdict] || entry.verdict;
+      status.appendChild(badge);
+
+      row.appendChild(age);
+      row.appendChild(name);
+      row.appendChild(qtype);
+      row.appendChild(status);
+      body.appendChild(row);
+    });
+  }
+
+  function render(stats) {
+    var paused = stats.disabled_remaining_s > 0;
+
+    el("queries").textContent = formatCount(stats.queries);
+    el("blocked").textContent = formatCount(stats.blocked);
+    el("cached").textContent = formatCount(stats.cached);
+    el("forwarded").textContent = formatCount(stats.forwarded);
+    el("errors").textContent = formatCount(stats.errors);
+
+    el("uptime").textContent = "Laufzeit " + formatDuration(stats.uptime_s);
+    el("blocked-pct").textContent = share(stats.blocked, stats.queries);
+    el("cached-pct").textContent = share(stats.cached, stats.queries);
+    el("forwarded-pct").textContent = share(stats.forwarded, stats.queries);
+    el("disabled").textContent = paused ? ("pausiert, noch " + formatDuration(stats.disabled_remaining_s)) : "Filter aktiv";
+
+    el("paused").hidden = !paused;
+    if (paused) el("paused-left").textContent = formatDuration(stats.disabled_remaining_s);
+
+    var meta = el("meta");
+    meta.textContent = "";
+    [
+      ["Blocklisten", formatCount(stats.domains) + " Domains"],
+      ["Backend", stats.backend],
+      ["Hardware-Tier", stats.tier],
+      ["Cache", formatCount(stats.cache_entries) + " Plätze"]
+    ].forEach(function (pair) {
+      var item = document.createElement("span");
+      var key = document.createElement("b");
+      key.textContent = pair[0] + ": ";
+      item.appendChild(key);
+      item.appendChild(document.createTextNode(String(pair[1])));
+      meta.appendChild(item);
+    });
+
+    renderRecent(Array.isArray(stats.recent) ? stats.recent : []);
+  }
+
+  function refresh() {
+    return fetch("/api/stats", { cache: "no-store" })
+      .then(function (response) {
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return response.json();
+      })
+      .then(function (stats) {
+        render(stats);
+        setConnection(true);
+      })
+      .catch(function (error) {
+        setConnection(false, "API nicht erreichbar");
+        if (window.console) console.warn(error);
+      });
+  }
+
+  function disable(seconds) {
+    return fetch("/api/disable?seconds=" + encodeURIComponent(seconds), { cache: "no-store" })
+      .then(refresh)
+      .catch(function (error) {
+        setConnection(false, "Schalten fehlgeschlagen");
+        if (window.console) console.warn(error);
+      });
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll("[data-seconds]"), function (button) {
+    button.addEventListener("click", function () {
+      disable(Number(button.dataset.seconds));
+    });
+  });
+
+  refresh();
+  setInterval(refresh, POLL_MS);
+})();
+</script>
+</body>
+</html>
