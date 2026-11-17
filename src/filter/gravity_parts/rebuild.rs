@@ -115,13 +115,14 @@ impl<'a> Rebuild<'a> {
     /// `seal` plus die Kennzahlen des Laufs; ob getauscht wird, entscheidet der Aufrufer.
     fn finish(mut self, started: Instant) -> (Box<dyn FilterBackend>, UpdateReport) {
         self.backend.seal();
+        let stats = self.backend.stats();
         let report = UpdateReport {
-            domains: self.backend.len(),
+            domains: stats.domains,
             lines: self.totals.lines,
             skipped: self.totals.skipped,
             sources: self.sources,
             duration: started.elapsed(),
-            heap_bytes: self.backend.heap_bytes(),
+            heap_bytes: stats.heap_bytes,
         };
         (self.backend, report)
     }

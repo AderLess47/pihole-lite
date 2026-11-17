@@ -19,7 +19,7 @@ use tokio::sync::Semaphore;
 use super::cache::{cache_ttl, ResponseCache};
 use super::resolve::Reply;
 use super::upstream::Upstream;
-use crate::filter::engine::FilterEngine;
+use crate::filter::engine::{now_seconds, FilterEngine};
 use crate::stats::ringbuffer::{Stats, Verdict};
 
 /// Maximale Query-Größe über UDP.
@@ -132,11 +132,14 @@ impl DnsServer {
 
     /// Schickt eine Query durch [`Self::resolve`] und verbucht das Ergebnis.
     ///
+    /// Die Uhr wird hier, am Rand des Entscheids, einmal pro Query gelesen und
+    /// weitergereicht.
+    ///
     /// Reihenfolge wie bisher: geblockte, gecachte und fehlgeschlagene Queries werden vor
     /// dem Senden gebucht; eine weitergeleitete Antwort erst danach und erst dann in den
     /// Cache, damit ein voller Cache die Antwort an den Client nicht verzögert.
     async fn handle(&self, socket: &UdpSocket, request: Vec<u8>, peer: SocketAddr) {
-        let mut reply = self.resolve(&request, peer).await;
+        let mut reply = self.resolve(&request, peer, now_seconds()).await;
 
         if reply.verdict == Some(Verdict::Forwarded) {
             self.send(socket, &reply, peer).await;

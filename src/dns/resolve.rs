@@ -16,9 +16,11 @@ impl DnsServer {
     /// Entscheidet anhand der Bytes, wie die Query beantwortet wird.
     ///
     /// Kein Socket, keine Statistik: das Ergebnis steht im [`Reply`] und wird vom
-    /// Aufrufer gesendet und gebucht. Der Name entsteht direkt im Reply-Puffer
-    /// ([`normalize_qname`]), also ohne Heap und ohne Kopie.
-    pub(super) async fn resolve(&self, request: &[u8], peer: SocketAddr) -> Reply {
+    /// Aufrufer gesendet und gebucht. Die Uhr kommt als `now` (Unix-Sekunden) herein,
+    /// damit eine abgeschaltete Filterung ohne echtes Warten prüfbar ist. Der Name
+    /// entsteht direkt im Reply-Puffer ([`normalize_qname`]), also ohne Heap und ohne
+    /// Kopie.
+    pub(super) async fn resolve(&self, request: &[u8], peer: SocketAddr, now: u64) -> Reply {
         let mut reply = Reply::none();
 
         if request.len() < HEADER_BYTES {
@@ -56,7 +58,7 @@ impl DnsServer {
         let name = std::str::from_utf8(&reply.name[..reply.name_len]).ok();
 
         if let Some(name) = name {
-            if self.engine.is_blocked(name) {
+            if self.engine.is_blocked_at(name, now) {
                 self.log(format_args!("{peer}: {name} -> geblockt"));
                 reply.verdict = Some(Verdict::Blocked);
                 reply.bytes = self.build_sinkhole(id, &packet, question);

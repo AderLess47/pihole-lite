@@ -37,17 +37,25 @@ Schreiber blockieren nie, Leser verwerfen tearing-anfällige Slots). Namen werde
 96 Byte gekürzt; nur ein Snapshot allokiert Strings. `web/api.rs` ist ein handgebauter
 HTTP/1.1-Server ohne Framework, mit Header-Cap, Read-Timeout und Verbindungslimit:
 `/api/stats` liefert JSON, `/api/disable?seconds=N` schaltet den Filter über
-`FilterEngine::disable_for` ab (`seconds=0` wieder an). Das Dashboard unter `/` ist eine
-einzige, per `include_str!` eingebettete HTML-Datei mit Inline-CSS/-JS: kein Asset-Ordner,
-kein Build-Schritt, keine CDN-Abhängigkeit. Der Endpunkt bindet standardmäßig auf
-`127.0.0.1`, weil der Disable-Switch keine Authentifizierung hat.
+`FilterEngine::disable_for` ab (`seconds=0` wieder an; die Zeit kommt wie im DNS-Pfad von
+außen). Das Dashboard unter `/` ist eine einzige, per `include_str!` eingebettete
+HTML-Datei mit Inline-CSS/-JS: kein Asset-Ordner, kein Build-Schritt, keine
+CDN-Abhängigkeit. Der Endpunkt bindet standardmäßig auf `127.0.0.1`, weil der
+Disable-Switch keine Authentifizierung hat.
 
 ## DNS-Pfad
 
-`dns/server.rs` trennt Entscheidung und I/O: `resolve(&self, &[u8]) -> Reply` parst, filtert,
-prüft den Cache und fragt den Upstream – ohne Socket und ohne Statistik. Der Socket-Loop
-sendet die Bytes aus dem `Reply` und bucht das Verdict. Der Name entsteht direkt im Puffer
-des `Reply` (`normalize_qname`), damit auch dieser Pfad ohne Heap pro Query bleibt.
+`dns/server.rs` trennt Entscheidung und I/O: `resolve(&self, &[u8], now) -> Reply` parst,
+filtert, prüft den Cache und fragt den Upstream – ohne Socket und ohne Statistik. Der
+Socket-Loop sendet die Bytes aus dem `Reply` und bucht das Verdict. Der Name entsteht
+direkt im Puffer des `Reply` (`normalize_qname`), damit auch dieser Pfad ohne Heap pro
+Query bleibt.
+
+Die Uhr ist ein Parameter: `now` (Unix-Sekunden) kommt aus `filter::engine::now_seconds()`
+am Rand des Entscheids und geht bis in `FilterEngine::is_blocked_at`. Kein
+`SystemTime::now()` in einer Entscheidung – nur so läuft eine Abschaltung im Test ohne
+`sleep` ab.
+
 Reihenfolge im Loop: geblockt/gecacht/Fehler werden vor dem Senden gebucht, eine
 weitergeleitete Antwort danach und erst dann in den Cache – so verzögert ein voller Cache
 die Antwort an den Client nicht. Neue Fälle gehören als Verdict in `resolve`, nicht als

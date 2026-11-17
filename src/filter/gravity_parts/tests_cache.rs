@@ -42,14 +42,14 @@
             .await
             .expect("first update");
         assert_eq!(1, first.domains);
-        assert!(engine.is_blocked("ads.example.com"));
+        assert!(engine.is_blocked_at("ads.example.com", 0));
 
         let second = GravityUpdater::new(config)
             .update(&engine)
             .await
             .expect("second update");
         assert_eq!(1, second.domains);
-        assert!(engine.is_blocked("ads.example.com"));
+        assert!(engine.is_blocked_at("ads.example.com", 0));
 
         let requests = requests.lock().unwrap();
         assert!(requests[0].contains("GET /hosts HTTP/1.0"));
@@ -95,7 +95,7 @@
             .expect("preload should succeed");
 
         assert_eq!(1, report.domains);
-        assert!(fresh.is_blocked("sub.ads.example.com"));
+        assert!(fresh.is_blocked_at("sub.ads.example.com", 0));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -31,7 +31,7 @@
         });
         let report = stale.preload(&engine).await.unwrap();
         assert_eq!(0, report.domains);
-        assert!(!engine.is_blocked("ads.example.com"));
+        assert!(!engine.is_blocked_at("ads.example.com", 0));
 
         // Ohne Limit wird dieselbe Datei geladen.
         let unlimited = GravityUpdater::new(GravityConfig {
@@ -48,7 +48,7 @@
         let engine = FilterEngine::new(Tier::Nano);
         let report = unlimited.preload(&engine).await.unwrap();
         assert_eq!(1, report.domains);
-        assert!(engine.is_blocked("ads.example.com"));
+        assert!(engine.is_blocked_at("ads.example.com", 0));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -121,7 +121,7 @@
         .expect("update should succeed");
 
         assert_eq!(1, report.domains);
-        assert!(engine.is_blocked("new.test"));
+        assert!(engine.is_blocked_at("new.test", 0));
         assert!(!seen.lock().unwrap().contains("If-None-Match"));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -145,8 +145,8 @@
 
         assert_eq!(2, report.domains);
         assert_eq!(0, report.sources);
-        assert!(engine.is_blocked("inline.test"));
-        assert!(engine.is_blocked("sub.inline.test"));
+        assert!(engine.is_blocked_at("inline.test", 0));
+        assert!(engine.is_blocked_at("sub.inline.test", 0));
     }
 
     #[tokio::test]
@@ -176,6 +176,6 @@
 
         assert_eq!(2, report.domains);
         assert_eq!(1, report.sources);
-        assert!(engine.is_blocked("local.test"));
-        assert!(engine.is_blocked("inline.test"));
+        assert!(engine.is_blocked_at("local.test", 0));
+        assert!(engine.is_blocked_at("inline.test", 0));
     }

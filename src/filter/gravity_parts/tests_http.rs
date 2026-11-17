@@ -27,7 +27,7 @@
         .await;
 
         let engine = FilterEngine::new(Tier::Nano);
-        assert!(!engine.is_blocked("ads.example.com"));
+        assert!(!engine.is_blocked_at("ads.example.com", 0));
 
         let report = updater(vec![format!("http://{addr}/hosts")], Duration::from_secs(5))
             .update(&engine)
@@ -36,10 +36,10 @@
 
         assert_eq!(2, report.domains);
         assert_eq!(4, report.lines);
-        assert!(engine.is_blocked("sub.ads.example.com"));
-        assert!(engine.is_blocked("tracker.test"));
-        assert!(!engine.is_blocked("example.com"));
-        assert_eq!(2, engine.domain_count());
+        assert!(engine.is_blocked_at("sub.ads.example.com", 0));
+        assert!(engine.is_blocked_at("tracker.test", 0));
+        assert!(!engine.is_blocked_at("example.com", 0));
+        assert_eq!(2, engine.stats().domains);
     }
 
     #[tokio::test]
@@ -56,15 +56,17 @@
             .await;
 
         assert!(matches!(result, Err(GravityError::Http { .. })));
-        assert_eq!(0, engine.domain_count());
+        assert_eq!(0, engine.stats().domains);
     }
 
     #[tokio::test]
     async fn failed_update_keeps_the_previous_blocklist() {
         let engine = FilterEngine::new(Tier::Nano);
-        engine.add("keep.test");
-        engine.seal();
-        assert!(engine.is_blocked("keep.test"));
+        let mut backend = crate::filter::engine::backend_for_tier(Tier::Nano);
+        backend.add("keep.test");
+        backend.seal();
+        engine.replace_backend(backend);
+        assert!(engine.is_blocked_at("keep.test", 0));
 
         let result = updater(
             vec!["http://127.0.0.1:1/hosts".to_owned()],
@@ -74,7 +76,7 @@
         .await;
 
         assert!(result.is_err());
-        assert!(engine.is_blocked("keep.test"));
+        assert!(engine.is_blocked_at("keep.test", 0));
     }
 
     #[tokio::test]
@@ -111,10 +113,10 @@
             .expect("update should succeed");
         let _ = std::fs::remove_file(&path);
 
-        assert!(engine.is_blocked("local.test"));
-        assert!(engine.is_blocked("inline.test"));
-        assert!(engine.is_blocked("remote.test"));
-        assert_eq!(3, engine.domain_count());
+        assert!(engine.is_blocked_at("local.test", 0));
+        assert!(engine.is_blocked_at("inline.test", 0));
+        assert!(engine.is_blocked_at("remote.test", 0));
+        assert_eq!(3, engine.stats().domains);
     }
 
     #[tokio::test]
@@ -133,7 +135,7 @@
             .expect("update should succeed");
 
         assert_eq!(1, report.domains);
-        assert!(engine.is_blocked("valid.test"));
+        assert!(engine.is_blocked_at("valid.test", 0));
     }
 
     #[tokio::test]

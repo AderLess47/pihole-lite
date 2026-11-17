@@ -173,17 +173,14 @@ async fn serve(
 }
 
 fn print_banner(profile: &HardwareProfile, config: &Config, engine: &FilterEngine) {
+    let backend = engine.stats();
     println!("pihole-lite {VERSION}");
     println!("  hardware : {}", profile.summary());
-    println!(
-        "  tier     : {} -> {}",
-        profile.tier.label(),
-        engine.backend_name()
-    );
+    println!("  tier     : {} -> {}", profile.tier.label(), backend.name);
     println!(
         "  filter   : {} domains, ~{} heap",
-        engine.domain_count(),
-        fmt_bytes(engine.heap_bytes() as u64)
+        backend.domains,
+        fmt_bytes(backend.heap_bytes as u64)
     );
     println!(
         "  dns      : udp {} (sinkhole {}, ttl {}s, max {} parallel, cache {} antworten)",

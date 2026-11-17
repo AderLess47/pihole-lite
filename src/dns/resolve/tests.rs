@@ -8,10 +8,12 @@ use tokio::net::UdpSocket;
 
 use crate::dns::server::ServerOptions;
 use crate::dns::upstream::Upstream;
-use crate::filter::engine::FilterEngine;
+use crate::filter::engine::{backend_for_tier, FilterEngine};
 use crate::profiler::Tier;
 
 const QTYPE_A: u16 = 1;
+/// Fester Zeitpunkt für alle Tests: die Uhr ist ein Parameter, also kein Warten nötig.
+const NOW: u64 = 1_700_000_000;
 
 /// Query im Wire-Format; bewusst handgebaut, damit der Test keine Encoder-Kette braucht.
 fn query_bytes(name: &str, qtype: u16, id: u16) -> Vec<u8> {
@@ -74,10 +76,13 @@ fn plain_engine() -> Arc<FilterEngine> {
     Arc::new(FilterEngine::new(Tier::Nano))
 }
 
+/// Bestand wie in Produktion: Backend bauen, versiegeln, tauschen.
 fn blocking_engine(domain: &str) -> Arc<FilterEngine> {
     let engine = FilterEngine::new(Tier::Nano);
-    engine.add(domain);
-    engine.seal();
+    let mut backend = backend_for_tier(Tier::Nano);
+    backend.add(domain);
+    backend.seal();
+    engine.replace_backend(backend);
     Arc::new(engine)
 }
 
@@ -101,7 +106,11 @@ async fn udp_responder_once() -> SocketAddr {
 async fn blocked_query_yields_a_sinkhole_and_a_blocked_verdict() {
     let server = server_with(blocking_engine("ads.example.com"), no_upstream(), 16);
     let reply = server
-        .resolve(&query_bytes("sub.ads.example.com", QTYPE_A, 0x1234), peer())
+        .resolve(
+            &query_bytes("sub.ads.example.com", QTYPE_A, 0x1234),
+            peer(),
+            NOW,
+        )
         .await;
 
     assert_eq!(Some(Verdict::Blocked), reply.verdict);
@@ -126,7 +135,7 @@ async fn cached_answer_is_served_without_the_upstream() {
         .insert("cache.test", QTYPE_A, stored, Duration::from_secs(60));
 
     let reply = server
-        .resolve(&query_bytes("cache.test", QTYPE_A, 0x0042), peer())
+        .resolve(&query_bytes("cache.test", QTYPE_A, 0x0042), peer(), NOW)
         .await;
 
     assert_eq!(Some(Verdict::Cached), reply.verdict);
@@ -144,7 +153,7 @@ async fn forwarded_query_returns_the_upstream_answer() {
     let server = server_with(plain_engine(), upstream, 0);
 
     let reply = server
-        .resolve(&query_bytes("forward.test", QTYPE_A, 0x0007), peer())
+        .resolve(&query_bytes("forward.test", QTYPE_A, 0x0007), peer(), NOW)
         .await;
 
     assert_eq!(Some(Verdict::Forwarded), reply.verdict);
@@ -157,7 +166,7 @@ async fn forwarded_query_returns_the_upstream_answer() {
 async fn upstream_failure_answers_with_servfail() {
     let server = server_with(plain_engine(), no_upstream(), 0);
     let reply = server
-        .resolve(&query_bytes("down.test", QTYPE_A, 0x0011), peer())
+        .resolve(&query_bytes("down.test", QTYPE_A, 0x0011), peer(), NOW)
         .await;
 
     assert_eq!(Some(Verdict::Error), reply.verdict);
@@ -170,7 +179,7 @@ async fn an_answer_is_not_taken_for_a_query() {
     let mut request = query_bytes("loop.test", QTYPE_A, 0x0101);
     request[2] |= 0x80;
 
-    let reply = server.resolve(&request, peer()).await;
+    let reply = server.resolve(&request, peer(), NOW).await;
 
     assert_eq!(None, reply.verdict);
     assert!(reply.bytes.is_none());
@@ -180,7 +189,7 @@ async fn an_answer_is_not_taken_for_a_query() {
 async fn short_packets_are_dropped_silently() {
     let server = server_with(plain_engine(), no_upstream(), 16);
     let reply = server
-        .resolve(&[0x12, 0x34, 0x01, 0x00, 0x00], peer())
+        .resolve(&[0x12, 0x34, 0x01, 0x00, 0x00], peer(), NOW)
         .await;
 
     assert_eq!(None, reply.verdict);
@@ -193,8 +202,39 @@ async fn broken_queries_get_formerr() {
     let mut request = query_bytes("broken.test", QTYPE_A, 0x0022);
     request.truncate(HEADER_BYTES + 3);
 
-    let reply = server.resolve(&request, peer()).await;
+    let reply = server.resolve(&request, peer(), NOW).await;
 
     assert_eq!(None, reply.verdict);
     assert_eq!(1, rcode(reply.bytes.as_ref().expect("formerr")));
+}
+
+#[tokio::test]
+async fn a_disabled_filter_lets_blocked_names_through_until_the_deadline() {
+    let upstream = Arc::new(Upstream::new(
+        vec![udp_responder_once().await],
+        Duration::from_secs(5),
+        false,
+    ));
+    let server = server_with(blocking_engine("ads.example.com"), upstream, 0);
+    server.engine.disable_for(60, NOW);
+
+    let reply = server
+        .resolve(
+            &query_bytes("ads.example.com", QTYPE_A, 0x0033),
+            peer(),
+            NOW + 30,
+        )
+        .await;
+    assert_eq!(Some(Verdict::Forwarded), reply.verdict);
+
+    // Nach der Deadline blockt derselbe Bestand wieder – nur die Zahl ändert sich.
+    let reply = server
+        .resolve(
+            &query_bytes("ads.example.com", QTYPE_A, 0x0034),
+            peer(),
+            NOW + 61,
+        )
+        .await;
+    assert_eq!(Some(Verdict::Blocked), reply.verdict);
+    assert_eq!(0, rcode(reply.bytes.as_ref().expect("sinkhole")));
 }

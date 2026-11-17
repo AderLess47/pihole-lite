@@ -22,7 +22,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Semaphore;
 use tokio::time::timeout;
 
-use crate::filter::engine::FilterEngine;
+use crate::filter::engine::{now_seconds, FilterEngine};
 use crate::profiler::Tier;
 use crate::stats::ringbuffer::Stats;
 
@@ -141,9 +141,10 @@ impl ApiServer {
     /// Baut das JSON für `/api/stats`.
     fn stats_response(&self) -> String {
         let snapshot = self.stats.snapshot(RECENT_ENTRIES);
+        let backend = self.engine.stats();
         let disabled = self
             .engine
-            .disabled_remaining()
+            .disabled_remaining_at(now_seconds())
             .map(|remaining| remaining.as_secs())
             .unwrap_or(0);
 
@@ -157,9 +158,9 @@ impl ApiServer {
             snapshot.cached,
             snapshot.forwarded,
             snapshot.errors,
-            self.engine.domain_count(),
+            backend.domains,
             self.tier.label(),
-            self.engine.backend_name(),
+            backend.name,
             self.cache_entries,
             disabled
         );
@@ -203,13 +204,13 @@ impl ApiServer {
             self.engine.enable();
             println!("[api] filter wieder aktiv");
         } else {
-            self.engine.disable_for(seconds);
+            self.engine.disable_for(seconds, now_seconds());
             println!("[api] filter für {seconds}s deaktiviert");
         }
 
         let remaining = self
             .engine
-            .disabled_remaining()
+            .disabled_remaining_at(now_seconds())
             .map(|duration| duration.as_secs())
             .unwrap_or(0);
         let body = format!("{{\"ok\":true,\"disabled_remaining_s\":{remaining}}}");
@@ -296,13 +297,21 @@ fn json_escape(out: &mut String, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filter::engine::FilterEngine;
+    use crate::filter::engine::{backend_for_tier, FilterEngine};
     use tokio::io::AsyncReadExt;
 
+    /// Bestand wie in Produktion: Backend bauen, versiegeln, tauschen.
+    fn blocked_engine(domain: &str) -> Arc<FilterEngine> {
+        let engine = FilterEngine::new(Tier::Nano);
+        let mut backend = backend_for_tier(Tier::Nano);
+        backend.add(domain);
+        backend.seal();
+        engine.replace_backend(backend);
+        Arc::new(engine)
+    }
+
     async fn start_api() -> (SocketAddr, Arc<FilterEngine>, Arc<Stats>) {
-        let engine = Arc::new(FilterEngine::new(Tier::Nano));
-        engine.add("blocked.test");
-        engine.seal();
+        let engine = blocked_engine("blocked.test");
         let stats = Arc::new(Stats::new(16));
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -358,15 +367,18 @@ mod tests {
     #[tokio::test]
     async fn disable_endpoint_toggles_the_filter() {
         let (addr, engine, _stats) = start_api().await;
-        assert!(engine.is_blocked("blocked.test"));
+        assert!(engine.is_blocked_at("blocked.test", 0));
 
         let response = request(addr, "/api/disable?seconds=42").await;
         assert!(
             response.contains("\"disabled_remaining_s\":42"),
             "{response}"
         );
-        assert!(!engine.is_blocked("blocked.test"), "filter muss aus sein");
-        assert!(engine.disabled_remaining().is_some());
+        assert!(
+            !engine.is_blocked_at("blocked.test", 0),
+            "filter muss aus sein"
+        );
+        assert!(engine.disabled_remaining_at(now_seconds()).is_some());
 
         let response = request(addr, "/api/disable?seconds=0").await;
         assert!(
@@ -374,7 +386,7 @@ mod tests {
             "{response}"
         );
         assert!(
-            engine.is_blocked("blocked.test"),
+            engine.is_blocked_at("blocked.test", 0),
             "filter muss wieder an sein"
         );
     }
@@ -383,7 +395,9 @@ mod tests {
     async fn disable_without_seconds_defaults_to_five_minutes() {
         let (addr, engine, _stats) = start_api().await;
         request(addr, "/api/disable").await;
-        let remaining = engine.disabled_remaining().expect("filter aus");
+        let remaining = engine
+            .disabled_remaining_at(now_seconds())
+            .expect("filter aus");
         assert!(remaining.as_secs() >= 298 && remaining.as_secs() <= 300);
     }
 
@@ -392,7 +406,7 @@ mod tests {
         let (addr, engine, _stats) = start_api().await;
         let response = request(addr, "/api/disable?seconds=abc").await;
         assert!(response.starts_with("HTTP/1.1 400"), "{response}");
-        assert!(!engine.is_disabled());
+        assert!(!engine.is_disabled_at(now_seconds()));
     }
 
     #[tokio::test]

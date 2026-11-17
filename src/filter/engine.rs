@@ -7,6 +7,10 @@
 //!
 //! Beide Backends interpretieren einen Treffer als "diese Domain **und alle
 //! Subdomains** sind geblockt" – die Semantik ist damit tier-unabhängig.
+//!
+//! Die Uhr kommt von außen: [`FilterEngine::is_blocked_at`] bekommt die Unix-Zeit in
+//! Sekunden als Parameter. Damit liegt die Zeit-Policy (die Abschaltung) im Entscheid und
+//! ist trotzdem ohne echtes Warten prüfbar.
 
 use std::borrow::Cow;
 use std::net::IpAddr;
@@ -20,23 +24,35 @@ use crate::profiler::Tier;
 /// Gemeinsames Interface aller Filter-Backends.
 ///
 /// Ablauf: `add` (beliebig oft, aus dem Gravity-Stream) → `seal` → nur noch lesend.
+/// Nur diese drei Datenpfad-Methoden und die Kennzahlen – Zeit und Policy bleiben in der
+/// Engine.
 pub trait FilterBackend: Send + Sync {
-    /// Name des Backends für Logs und Dashboard.
-    fn kind(&self) -> &'static str;
     /// Fügt eine Domain (mit allen Subdomains) hinzu.
     fn add(&mut self, domain: &str);
     /// Schließt die Aufbauphase ab (sortieren/deduplizieren). Idempotent.
     fn seal(&mut self);
     /// Prüft, ob die Domain oder einer ihrer Eltern-Domains geblockt ist.
     fn is_blocked(&self, domain: &str) -> bool;
+    /// Kennzahlen für Logs und Dashboard.
+    fn stats(&self) -> BackendStats;
+}
+
+/// Kennzahlen eines Backends – einmal gelesen statt dreimal nachgefragt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BackendStats {
+    /// Name des Backends für Logs und Dashboard.
+    pub name: &'static str,
     /// Anzahl eindeutiger Domains.
-    fn len(&self) -> usize;
+    pub domains: usize,
     /// Grobe Heap-Schätzung in Bytes.
-    fn heap_bytes(&self) -> usize;
+    pub heap_bytes: usize,
 }
 
 /// Aktuelle Unix-Zeit in Sekunden (0, falls die Uhr vor 1970 steht).
-fn unix_seconds() -> u64 {
+///
+/// Der einzige Ort, an dem die Prozessuhr gelesen wird; alles darunter bekommt die Zeit
+/// als Parameter.
+pub fn now_seconds() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_secs())
@@ -131,10 +147,6 @@ pub struct NanoHashBackend {
 }
 
 impl FilterBackend for NanoHashBackend {
-    fn kind(&self) -> &'static str {
-        "nanohash (sorted xxh3-64)"
-    }
-
     fn add(&mut self, domain: &str) {
         let domain = normalize(domain);
         if domain.is_empty() {
@@ -175,12 +187,12 @@ impl FilterBackend for NanoHashBackend {
         }
     }
 
-    fn len(&self) -> usize {
-        self.hashes.len()
-    }
-
-    fn heap_bytes(&self) -> usize {
-        self.hashes.capacity() * std::mem::size_of::<u64>()
+    fn stats(&self) -> BackendStats {
+        BackendStats {
+            name: "nanohash (sorted xxh3-64)",
+            domains: self.hashes.len(),
+            heap_bytes: self.hashes.capacity() * std::mem::size_of::<u64>(),
+        }
     }
 }
 
@@ -204,10 +216,6 @@ pub struct RadixTrieBackend {
 }
 
 impl FilterBackend for RadixTrieBackend {
-    fn kind(&self) -> &'static str {
-        "radix-trie (reversed labels)"
-    }
-
     fn add(&mut self, domain: &str) {
         let domain = normalize(domain);
         if domain.is_empty() {
@@ -260,11 +268,7 @@ impl FilterBackend for RadixTrieBackend {
         node.blocked
     }
 
-    fn len(&self) -> usize {
-        self.entries
-    }
-
-    fn heap_bytes(&self) -> usize {
+    fn stats(&self) -> BackendStats {
         fn walk(node: &TrieNode) -> usize {
             let mut total = node.label.capacity();
             total += node.children.capacity() * std::mem::size_of::<TrieNode>();
@@ -273,7 +277,11 @@ impl FilterBackend for RadixTrieBackend {
             }
             total
         }
-        walk(&self.root)
+        BackendStats {
+            name: "radix-trie (reversed labels)",
+            domains: self.entries,
+            heap_bytes: walk(&self.root),
+        }
     }
 }
 
@@ -330,22 +338,9 @@ impl FilterEngine {
         self.backend.write().unwrap_or_else(|err| err.into_inner())
     }
 
-    /// Fügt eine Domain hinzu. Nur für Tests: der Produktionspfad baut einen Bestand über
-    /// den Gravity-Builder und tauscht ihn mit [`Self::replace_backend`].
-    #[cfg(test)]
-    pub fn add(&self, domain: &str) {
-        self.write().add(domain);
-    }
-
-    /// Schließt die Aufbauphase ab. Nur für Tests, siehe [`Self::add`].
-    #[cfg(test)]
-    pub fn seal(&self) {
-        self.write().seal();
-    }
-
     /// Schaltet den Filter für `seconds` Sekunden ab (0 = sofort wieder an).
-    pub fn disable_for(&self, seconds: u64) {
-        let until = unix_seconds().saturating_add(seconds);
+    pub fn disable_for(&self, seconds: u64, now: u64) {
+        let until = now.saturating_add(seconds);
         self.disabled_until.store(until, Ordering::Release);
     }
 
@@ -354,41 +349,31 @@ impl FilterEngine {
         self.disabled_until.store(0, Ordering::Release);
     }
 
-    /// Ist der Filter gerade abgeschaltet?
-    pub fn is_disabled(&self) -> bool {
-        self.disabled_until.load(Ordering::Acquire) > unix_seconds()
+    /// Ist der Filter zum Zeitpunkt `now` abgeschaltet?
+    pub fn is_disabled_at(&self, now: u64) -> bool {
+        self.disabled_until.load(Ordering::Acquire) > now
     }
 
-    /// Restlaufzeit der Abschaltung, falls aktiv.
-    pub fn disabled_remaining(&self) -> Option<Duration> {
+    /// Restlaufzeit der Abschaltung zum Zeitpunkt `now`, falls aktiv.
+    pub fn disabled_remaining_at(&self, now: u64) -> Option<Duration> {
         let until = self.disabled_until.load(Ordering::Acquire);
-        let now = unix_seconds();
         (until > now).then(|| Duration::from_secs(until - now))
     }
 
-    /// Prüft eine (bereits normalisierte, kleingeschriebene) Query-Domain.
+    /// Entscheid für eine (bereits normalisierte, kleingeschriebene) Query-Domain.
     ///
-    /// Solange der Filter abgeschaltet ist, gilt alles als erlaubt.
-    pub fn is_blocked(&self, domain: &str) -> bool {
-        if self.is_disabled() {
+    /// `now` ist die Unix-Zeit in Sekunden. Solange der Filter abgeschaltet ist, gilt
+    /// alles als erlaubt – die Policy sitzt hier, nicht im Backend und nicht im Aufrufer.
+    pub fn is_blocked_at(&self, domain: &str, now: u64) -> bool {
+        if self.is_disabled_at(now) {
             return false;
         }
         self.read().is_blocked(domain)
     }
 
-    /// Anzahl eindeutiger geblockter Domains.
-    pub fn domain_count(&self) -> usize {
-        self.read().len()
-    }
-
-    /// Backend-Name für Logs und Dashboard.
-    pub fn backend_name(&self) -> &'static str {
-        self.read().kind()
-    }
-
-    /// Grobe Heap-Schätzung des Backends in Bytes.
-    pub fn heap_bytes(&self) -> usize {
-        self.read().heap_bytes()
+    /// Kennzahlen des aktuellen Bestands.
+    pub fn stats(&self) -> BackendStats {
+        self.read().stats()
     }
 }
 
@@ -409,7 +394,7 @@ mod tests {
         assert!(!backend.is_blocked("notads.example.com"));
         assert!(!backend.is_blocked("nottracker.test"));
         assert!(!backend.is_blocked(""));
-        assert_eq!(2, backend.len());
+        assert_eq!(2, backend.stats().domains);
     }
 
     #[test]
@@ -420,6 +405,29 @@ mod tests {
     #[test]
     fn radix_trie_matches_domains_and_subdomains() {
         assert_matching(&mut RadixTrieBackend::default());
+    }
+
+    #[test]
+    fn disable_policy_follows_the_injected_clock() {
+        const START: u64 = 1_000_000;
+        let engine = FilterEngine::new(Tier::Nano);
+        assert!(!engine.is_disabled_at(START));
+        assert_eq!(None, engine.disabled_remaining_at(START));
+
+        engine.disable_for(60, START);
+        assert!(engine.is_disabled_at(START));
+        assert!(engine.is_disabled_at(START + 59));
+        assert_eq!(
+            Some(Duration::from_secs(1)),
+            engine.disabled_remaining_at(START + 59)
+        );
+        // Genau zur Deadline ist der Filter wieder an – ohne Warten im Test.
+        assert!(!engine.is_disabled_at(START + 60));
+        assert_eq!(None, engine.disabled_remaining_at(START + 60));
+
+        engine.disable_for(30, START);
+        engine.enable();
+        assert!(!engine.is_disabled_at(START));
     }
 
     #[test]
