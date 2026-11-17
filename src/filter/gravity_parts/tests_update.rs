@@ -125,3 +125,57 @@
         assert!(!seen.lock().unwrap().contains("If-None-Match"));
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[tokio::test]
+    async fn preload_applies_inline_domains_without_any_source() {
+        let engine = FilterEngine::new(Tier::Nano);
+        let updater = GravityUpdater::new(GravityConfig {
+            urls: Vec::new(),
+            local_files: Vec::new(),
+            inline: vec!["inline.test".to_owned(), "Sub.Inline.TEST.".to_owned()],
+            fetcher: None,
+            cache_dir: None,
+            cache_max_age: None,
+            interval: Duration::ZERO,
+            source_timeout: Duration::from_secs(5),
+            verbose: false,
+        });
+
+        let report = updater.preload(&engine).await.unwrap();
+
+        assert_eq!(2, report.domains);
+        assert_eq!(0, report.sources);
+        assert!(engine.is_blocked("inline.test"));
+        assert!(engine.is_blocked("sub.inline.test"));
+    }
+
+    #[tokio::test]
+    async fn preload_reads_local_files_and_skips_missing_caches() {
+        let path = std::env::temp_dir().join(format!(
+            "pihole-lite-gravity-{}-preload.txt",
+            std::process::id()
+        ));
+        std::fs::write(&path, "0.0.0.0 local.test\n").unwrap();
+
+        let engine = FilterEngine::new(Tier::Nano);
+        let updater = GravityUpdater::new(GravityConfig {
+            // Kein Cache: der Start darf dafür keinen einzigen Netzwerkzugriff machen.
+            urls: vec!["http://127.0.0.1:1/hosts".to_owned()],
+            local_files: vec![path.clone()],
+            inline: vec!["inline.test".to_owned()],
+            fetcher: None,
+            cache_dir: None,
+            cache_max_age: None,
+            interval: Duration::ZERO,
+            source_timeout: Duration::from_secs(5),
+            verbose: false,
+        });
+
+        let report = updater.preload(&engine).await.unwrap();
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(2, report.domains);
+        assert_eq!(1, report.sources);
+        assert!(engine.is_blocked("local.test"));
+        assert!(engine.is_blocked("inline.test"));
+    }

@@ -65,6 +65,11 @@ Lauf lässt den vorherigen Bestand unangetastet.
 
 Persistenz: pro Quelle liegen `<hash>.list` und `<hash>.meta` unter `gravity_cache_dir`.
 `preload` baut den Bestand daraus **ohne Netzwerk** auf, bevor der DNS-Socket aufgeht.
+Preload und Update laufen durch denselben Aufbau (`Rebuild` in
+`gravity_parts/rebuild.rs`): lokale Dateien, dann der Remote-Teil, zuletzt die
+Inline-Domains. Unterschiedlich sind nur die Quelle des Remote-Teils (Platten-Cache vs.
+Download) und die Bedeutung eines leeren Bestands (Start: egal, Update: Fehler). Deshalb
+muss `main` nach `preload` keine Inline-Domains nachtragen.
 `http://`-Quellen werden mit `If-None-Match` / `If-Modified-Since` revalidiert; ein `304`
 liest die Cache-Datei statt erneut zu laden. Der Fetcher bekommt bewusst keine Conditional
 Header – ohne Statuszeile wäre eine leere `304`-Antwort nicht von einer leeren Liste zu
