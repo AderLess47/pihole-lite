@@ -103,45 +103,176 @@ jobs:
     name: ARMv6 cross build
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # Bookworm statt ubuntu-latest: dort ist die glibc 2.36, und gegen genau die wird
-    # gelinkt. Auf ubuntu-latest (glibc 2.39) entsteht ein Binary, das auf einem
-    # Raspberry Pi OS mit "GLIBC_2.39 not found" nicht startet. Bookworm ist das
-    # Debian, auf dem auch das 32-Bit-Image fuer Pi 1/Zero basiert.
-    container: debian:bookworm
+    # Kein Container: die glibc-Baseline kommt nicht mehr vom Host, sondern vom
+    # Raspbian-Sysroot, gegen das gelinkt wird. Damit bleibt der Job ein
+    # gewoehnlicher Runner-Job mit bash, rustup und Cache wie im check-Job - im
+    # Container brachten dash als Standard-Shell und ein abweichendes $HOME nur
+    # eigene Fehlerquellen mit.
+    # Kein eigenes CARGO_HOME/RUSTUP_HOME: auf dem Runner gehoert /usr/local dem
+    # System, und rustup scheitert dort mit "could not create bin directory".
     env:
-      CARGO_HOME: /usr/local/cargo
-      RUSTUP_HOME: /usr/local/rustup
-      CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER: arm-linux-gnueabihf-gcc
-      PATH: /usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+      CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_LINKER: ${{ github.workspace }}/armv6-link.sh
+      # Ohne diese Zeile kann cargo eine andere Toolchain aufloesen als die, in
+      # die rust-std fuer ARM installiert wurde ("can't find crate for `std`").
+      RUSTUP_TOOLCHAIN: stable
     steps:
+      # Ausgabe nur bei Fehler: sonst stehen hunderte dpkg-Zeilen im Log und
+      # die Ursache eines spaeteren Fehlschlags ist im Log nicht mehr zu finden.
       - name: Werkzeuge
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            ca-certificates curl git build-essential file \
-            gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
+          if ! { sudo apt-get update -qq && sudo apt-get install -qq -y --no-install-recommends \
+                   ca-certificates curl git build-essential file binutils gzip xz-utils \
+                   gcc-arm-linux-gnueabihf; } > /tmp/apt.log 2>&1; then
+            tail -n 12 /tmp/apt.log | while IFS= read -r line; do
+              echo "::error::apt: $line"
+            done
+            exit 1
+          fi
 
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Rust-Toolchain
-        run: |
-          curl -sSf https://sh.rustup.rs -o /tmp/rustup.sh
-          sh /tmp/rustup.sh -y --profile minimal --default-toolchain stable \
-            --component clippy --target arm-unknown-linux-gnueabihf
-
-      - name: Cache
-        uses: Swatinem/rust-cache@v2
+      # Die Debian-armhf-Toolchain hat ARMv7 + VFPv3 als Baseline; ihre crt-Objekte
+      # tragen genau das ins Binary. Der Pi 1 ist ein ARM1176: ARMv6, VFPv2, kein
+      # Thumb-2. Deshalb wird gegen einen Raspberry-Pi-OS-Sysroot gelinkt, dessen
+      # crt-Objekte, libgcc und glibc fuer ARMv6 gebaut sind - sonst behauptet das
+      # Binary ARMv7, und wer spaeter readelf -A liest, kann sich auf die Angabe
+      # nicht verlassen.
+      #
+      # Der Sysroot aendert sich nicht von selbst; ohne Cache laedt jeder Lauf
+      # rund 24 MB von einem Raspbian-Mirror.
+      - name: ARMv6-Sysroot cachen
+        uses: actions/cache@v4
         with:
-          key: armv6-bookworm
+          path: ${{ runner.temp }}/armv6-sysroot
+          key: armv6-sysroot-raspbian-bookworm-v1
+
+      - name: ARMv6-Sysroot
+        run: |
+          set -euo pipefail
+          sysroot="$RUNNER_TEMP/armv6-sysroot"
+          if [ -f "$sysroot/usr/lib/arm-linux-gnueabihf/Scrt1.o" ]; then
+            echo "Sysroot aus dem Cache"
+          else
+            mkdir -p "$sysroot"
+            echo "Index holen"
+            # archive.raspbian.org ist der kanonische Host; der Name
+            # raspbian.raspberrypi.com ist nur ein Redirector, der je nach Laune
+            # auf einen schnellen oder einen kaputten Mirror zeigt.
+            mirror=""
+            for candidate in http://archive.raspbian.org/raspbian \
+                             http://mirror.nl.leaseweb.net/raspbian/raspbian; do
+              if curl -fsSL --retry 3 --max-time 180 \
+                  -o /tmp/Packages.xz "$candidate/dists/bookworm/main/binary-armhf/Packages.xz"; then
+                mirror=$candidate
+                break
+              fi
+            done
+            if [ -z "$mirror" ]; then
+              echo "::error::Kein Raspbian-Mirror liefert den Index"
+              exit 1
+            fi
+            echo "Mirror: $mirror"
+            xz -dc /tmp/Packages.xz > /tmp/Packages
+            echo "Index: $(wc -l < /tmp/Packages) Zeilen"
+            for pkg in libc6 libc6-dev libgcc-s1 libgcc-12-dev gcc-12; do
+              # sed statt grep -m1: unter `pipefail` laesst ein frueh beendetes
+              # grep die Pipe mit SIGPIPE sterben und der Job bricht ohne Meldung ab.
+              file=$(sed -n "/^Package: $pkg\$/,/^\$/s/^Filename: //p" /tmp/Packages)
+              echo "$pkg -> ${file:-FEHLT im Index}"
+              if [ -z "$file" ]; then
+                echo "::error::Paket $pkg fehlt im Raspbian-Index"
+                exit 1
+              fi
+              curl -fsSL --retry 3 --max-time 300 -o "/tmp/$pkg.deb" "$mirror/$file"
+              dpkg-deb -x "/tmp/$pkg.deb" "$sysroot"
+            done
+          fi
+          # Nicht SYSROOT nennen: der Name ist belegt. Steht SYSROOT vor der
+          # Toolchain-Installation in der Umgebung, findet rustc spaeter fuer das
+          # eigene Crate kein `std` mehr (E0463), obwohl rust-std installiert ist.
+          echo "ARM_SYSROOT=$sysroot" >> "$GITHUB_ENV"
+          # Nichts am Binary zu reparieren, was schon hier falsch ist.
+          readelf -A "$sysroot/usr/lib/arm-linux-gnueabihf/Scrt1.o" > /tmp/crt.attrs
+          if ! grep -q 'Tag_CPU_arch: v6' /tmp/crt.attrs; then
+            echo "::error::Sysroot-crt ist nicht ARMv6"
+            cat /tmp/crt.attrs
+            exit 1
+          fi
+
+      # gcc loest -lgcc und -lgcc_s in der Reihenfolge der Argumente auf. Ein -L
+      # aus RUSTFLAGS landet am Ende der Linkerzeile und ist damit zu spaet:
+      # libgcc kaeme weiter von der Debian-Toolchain und traegt deren v7-Attribute
+      # ins Binary. Der Wrapper setzt die Sysroot-Flags vor rustcs Argumente.
+      - name: Linker-Wrapper
+        run: |
+          {
+            echo '#!/bin/sh'
+            echo 'set -e'
+            echo ': "${ARM_SYSROOT:?ARM_SYSROOT fehlt}"'
+            echo 'gccdir=$(ls -d "$ARM_SYSROOT"/usr/lib/gcc/arm-linux-gnueabihf/*/ 2>/dev/null | head -n 1)'
+            echo 'exec arm-linux-gnueabihf-gcc --sysroot="$ARM_SYSROOT" -B"$ARM_SYSROOT"/usr/lib/arm-linux-gnueabihf -L"$gccdir" "$@"'
+          } > "$GITHUB_WORKSPACE/armv6-link.sh"
+          chmod +x "$GITHUB_WORKSPACE/armv6-link.sh"
+          for f in Scrt1.o libc.so libgcc.a libgcc_s.so crti.o; do
+            echo "wrapper: $f -> $("$GITHUB_WORKSPACE/armv6-link.sh" -print-file-name=$f)"
+          done
+
+      # Dieselbe Action wie im check-Job: sie legt rust-std fuer das ARM-Ziel
+      # gleich mit an. Der handgeschriebene Installer lief zwar durch, aber
+      # cargo fand danach kein `std` fuer arm-unknown-linux-gnueabihf.
+      - name: Rust-Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          targets: arm-unknown-linux-gnueabihf
+      # Kein rust-cache in diesem Job: er sichert und restauriert auch RUSTUP_HOME.
+      # Eine Wiederherstellung ohne rust-std fuer ARM laesst rustups Metadaten
+      # trotzdem "installiert" sagen, `rustup target add` wird dann zum No-op -
+      # und clippy bricht mit "can't find crate for `std`" ab. Der Build dauert
+      # hier ohnehin nur eine knappe Minute.
+      - name: ARM-Ziel sicherstellen
+        run: |
+          if ! rustup target add arm-unknown-linux-gnueabihf > /tmp/target.log 2>&1; then
+            tail -n 12 /tmp/target.log | while IFS= read -r line; do
+              echo "::error::target: $line"
+            done
+            exit 1
+          fi
+          rustup target list --installed
 
       # Zielabhaengige Warnungen (z. B. bedingte Kompilierung, Layout-Annahmen
       # auf 32 Bit) tauchen im x86-Lauf nicht auf.
+      # Cargo schreibt sein Protokoll in eine Datei: die Logansicht zeigt nur den
+      # Anfang, und bei einem Fehlschlag mitten im Build steht die Ursache im
+      # letzten Dutzend Zeilen. Diese Zeilen gehen zusaetzlich als Annotation raus,
+      # die auch dann lesbar bleibt.
       - name: Clippy ARMv6
-        run: cargo clippy --all-targets --target arm-unknown-linux-gnueabihf -- -D warnings
+        run: |
+          if ! cargo clippy --all-targets --target arm-unknown-linux-gnueabihf -- -D warnings \
+              > /tmp/clippy.log 2>&1; then
+            tail -n 12 /tmp/clippy.log | while IFS= read -r line; do
+              echo "::error::clippy: $line"
+            done
+            exit 1
+          fi
+          echo "Clippy ARMv6 sauber"
 
       - name: Release-Build
-        run: cargo build --release --target arm-unknown-linux-gnueabihf
+        env:
+          # target-cpu statt nur target-feature: der ARM1176 ist kein generisches
+          # ARMv6, sondern ein ARMv6K ohne Hardware-Division und ohne Thumb-2.
+          # Sysroot, crt und libgcc kommen vom Linker-Wrapper.
+          CARGO_TARGET_ARM_UNKNOWN_LINUX_GNUEABIHF_RUSTFLAGS: "-C target-cpu=arm1176jzf-s"
+        run: |
+          if ! cargo build --release --target arm-unknown-linux-gnueabihf \
+              > /tmp/build.log 2>&1; then
+            tail -n 12 /tmp/build.log | while IFS= read -r line; do
+              echo "::error::build: $line"
+            done
+            exit 1
+          fi
+          echo "Release-Build fertig"
 
       # Der Lastgenerator laeuft auf dem Pi selbst, nicht auf dem Messrechner.
       # Auf x86 gebaut zeigen sich 32-Bit-Eigenheiten (Groessentypen, Linker)
@@ -149,8 +280,9 @@ jobs:
       - name: Lastgenerator ARMv6 bauen
         run: |
           rustc -O --edition 2021 --target arm-unknown-linux-gnueabihf \
-            -C linker=arm-linux-gnueabihf-gcc -D warnings \
-            bench/loadgen.rs -o loadgen-armv6
+            -C linker="$GITHUB_WORKSPACE/armv6-link.sh" \
+            -C target-cpu=arm1176jzf-s \
+            -D warnings bench/loadgen.rs -o loadgen-armv6 2>&1 | tail -n 40
           file loadgen-armv6
           file loadgen-armv6 | grep -q 'ARM'
 
@@ -158,8 +290,19 @@ jobs:
       # kein GLIBC-Symbol darf neuer als die Baseline 2.36 sein.
       - name: Artefakt pruefen
         run: |
-          file target/arm-unknown-linux-gnueabihf/release/pihole-lite
-          needed=$(strings -a target/arm-unknown-linux-gnueabihf/release/pihole-lite \
+          bin=target/arm-unknown-linux-gnueabihf/release/pihole-lite
+          file $bin
+          # Der Pi 1 kann ARMv6 und VFPv2. Steht hier wieder v7, ist der Sysroot
+          # verrutscht und das Binary behauptet eine CPU, die es nicht gibt.
+          attrs=$(readelf -A $bin)
+          for want in 'Tag_CPU_arch: v6' 'Tag_FP_arch: VFPv2'; do
+            if ! grep -q "$want" <<< "$attrs"; then
+              echo "::error::ELF-Attribut fehlt: $want"
+              echo "$attrs"
+              exit 1
+            fi
+          done
+          needed=$(strings -a $bin \
             | grep -o 'GLIBC_[0-9.]*' | sed 's/^GLIBC_//' | sort -uV | tail -1)
           echo "hoechste benoetigte glibc: $needed"
           if [ "$(printf '%s\n' 2.36 "$needed" | sort -V | tail -1)" != "2.36" ]; then

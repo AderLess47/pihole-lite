@@ -35,14 +35,26 @@ gelinkt: ein Build auf einer aktuellen Distribution verlangt deren glibc und sta
 älteren Pi-Images nicht. Die CI baut deshalb in einem `debian:bookworm`-Container
 (glibc 2.36) und bricht ab, wenn das Binary ein neueres Symbol als `GLIBC_2.36` braucht.
 
+Die glibc allein reicht aber nicht: Debian-armhf hat **ARMv7 + VFPv3** als Baseline, und
+seine crt-Objekte tragen das als ELF-Attribut ins fertige Binary — `Tag_CPU_arch: v7`,
+`Thumb-2`, `VFPv3-D16`. Der Pi 1 ist ein ARM1176: ARMv6K, VFPv2, kein Thumb-2, keine
+Hardware-Division. Die CI linkt deshalb gegen einen **Raspberry-Pi-OS-Sysroot**
+(`libc6`, `libc6-dev`, `libgcc-s1`, `libgcc-12-dev`, `gcc-12` aus Raspbian bookworm,
+nach `$RUNNER_TEMP` entpackt) und kompiliert mit `-C target-cpu=arm1176jzf-s`. Damit
+stehen im Binary `Tag_CPU_arch: v6` und `Tag_FP_arch: VFPv2`, und `readelf -A` sagt die
+Wahrheit über den Code, statt die Toolchain-Defaults zu wiederholen. Der Build prüft
+das selbst: fehlt eines der beiden Attribute, bricht der Job ab.
+
 ## Checks und Releases
 
 Die CI (`.github/workflows/ci.yml`) läuft bei jedem Push auf `main` und bei Pull Requests:
 
 - `fmt, clippy, test` – `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
   `cargo test`
-- `ARMv6 cross build` – Clippy und Release-Build gegen `arm-unknown-linux-gnueabihf`,
-  `file`-Prüfung, glibc-Guard, Paketierung mit `sha256sum`, Upload als Workflow-Artefakt
+- `ARMv6 cross build` – Clippy und Release-Build gegen `arm-unknown-linux-gnueabihf`
+  gegen einen ARMv6-Sysroot, `file`-Prüfung, ELF-Attribute (`Tag_CPU_arch: v6`,
+  `Tag_FP_arch: VFPv2`), glibc-Guard, Paketierung mit `sha256sum`, Upload als
+  Workflow-Artefakt
 
 Ein Tag `v*` baut dasselbe Binary und hängt es samt Prüfsumme dauerhaft an das Release:
 
