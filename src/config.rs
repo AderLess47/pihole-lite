@@ -468,6 +468,9 @@ mod tests {
         let err = Config::load(Some(Path::new("/gibt/es/nicht.toml")))
             .err()
             .expect("fehlende datei mit --config ist ein fehler");
-        assert!(err.contains("kann /gibt/es/nicht.toml nicht lesen"), "{err}");
+        assert!(
+            err.contains("kann /gibt/es/nicht.toml nicht lesen"),
+            "{err}"
+        );
     }
 }
