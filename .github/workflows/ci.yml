@@ -14,6 +14,7 @@ jobs:
   check:
     name: fmt, clippy, test
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -40,7 +41,7 @@ jobs:
   bench:
     name: bench (loadgen, skripte)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
 
@@ -61,9 +62,14 @@ jobs:
           fi
           ./loadgen --server 127.0.0.1:9 --seconds 1 --threads 2 --mode blocked > loadgen.txt
           cat loadgen.txt
-          grep -q '^mode=blocked$' loadgen.txt
-          grep -q '^qps=' loadgen.txt
-          grep -q '^max_ms=' loadgen.txt
+          # Ein nacktes `grep -q` endet unter `set -e` ohne Meldung; welcher
+          # erwartete Wert fehlte, waere aus dem Log nicht zu ersehen.
+          for want in '^mode=blocked$' '^qps=' '^max_ms='; do
+            if ! grep -q "$want" loadgen.txt; then
+              echo "::error::loadgen-Ausgabe ohne $want"
+              exit 1
+            fi
+          done
 
       - name: Skripte syntaktisch pruefen
         run: |
@@ -89,8 +95,11 @@ jobs:
             '| 100k Domains (Sinkhole) | Tier 1 (Nano) | 40000.0 |' \
             > /tmp/ergebnis.md
           bash bench/eintragen.sh /tmp/ergebnis.md
-          grep -q '| 100k Domains (Sinkhole) | 100000 | 11.0 | 11.0 | 11.0 | 11.0 | 40000.0 |' \
-            docs/messungen.md
+          if ! grep -q '| 100k Domains (Sinkhole) | 100000 | 11.0 | 11.0 | 11.0 | 11.0 | 40000.0 |' \
+              docs/messungen.md; then
+            echo "::error::die Messzeile steht nach eintragen.sh nicht in docs/messungen.md"
+            exit 1
+          fi
           if grep -q '^| 100k Domains (Sinkhole) | Tier 1' docs/messungen.md; then
             echo "::error::die Tier-Tabelle ist in die Messwerte geraten"
             exit 1
@@ -102,7 +111,13 @@ jobs:
   armv6:
     name: ARMv6 cross build
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Gemessen sind es 57-111 s. Die Grenze deckt den langsamsten legitimen
+    # Lauf: toter erster Mirror fuer den Index (--retry 3 --max-time 180, also
+    # bis 4 x 180 s plus Backoff, rund 12 min) plus Download und Build. Ein
+    # Paket, das auf dem gewaehlten Mirror haengt, kostet hoechstens 4 x 120 s,
+    # bevor der Ausweich-Mirror drankommt. Enger darf die Grenze nicht werden,
+    # sonst trifft sie den zweiten Mirror nie.
+    timeout-minutes: 20
     # Kein Container: die glibc-Baseline kommt nicht mehr vom Host, sondern vom
     # Raspbian-Sysroot, gegen das gelinkt wird. Damit bleibt der Job ein
     # gewoehnlicher Runner-Job mit bash, rustup und Cache wie im check-Job - im
@@ -175,6 +190,12 @@ jobs:
             echo "Mirror: $mirror"
             xz -dc /tmp/Packages.xz > /tmp/Packages
             echo "Index: $(wc -l < /tmp/Packages) Zeilen"
+            # Der Mirror, der den Index geliefert hat, zuerst; der andere bleibt
+            # als Ausweichweg, falls genau dort ein Paket haengt.
+            ordered=$(printf '%s\n' "$mirror" \
+                       http://archive.raspbian.org/raspbian \
+                       http://mirror.nl.leaseweb.net/raspbian/raspbian \
+                     | awk '!seen[$0]++')
             for pkg in libc6 libc6-dev libgcc-s1 libgcc-12-dev gcc-12; do
               # sed statt grep -m1: unter `pipefail` laesst ein frueh beendetes
               # grep die Pipe mit SIGPIPE sterben und der Job bricht ohne Meldung ab.
@@ -184,7 +205,24 @@ jobs:
                 echo "::error::Paket $pkg fehlt im Raspbian-Index"
                 exit 1
               fi
-              curl -fsSL --retry 3 --max-time 300 -o "/tmp/$pkg.deb" "$mirror/$file"
+              got=""
+              for candidate in $ordered; do
+                if curl -fsSL --retry 3 --max-time 120 -o "/tmp/$pkg.deb" "$candidate/$file"; then
+                  got=$candidate
+                  break
+                fi
+              done
+              if [ -z "$got" ]; then
+                echo "::error::Paket $pkg liess sich von keinem Mirror laden"
+                exit 1
+              fi
+              if [ "$got" != "$mirror" ]; then
+                # Ab jetzt zuerst dort nachsehen: ein Mirror, der ein Paket hat
+                # haengen lassen, soll nicht bei jedem weiteren 8 min kosten.
+                echo "$pkg kam von $got statt von $mirror"
+                mirror=$got
+                ordered=$(printf '%s\n' "$got" $ordered | awk '!seen[$0]++')
+              fi
               dpkg-deb -x "/tmp/$pkg.deb" "$sysroot"
             done
           fi
@@ -284,17 +322,32 @@ jobs:
             -C target-cpu=arm1176jzf-s \
             -D warnings bench/loadgen.rs -o loadgen-armv6 2>&1 | tail -n 40
           file loadgen-armv6
-          file loadgen-armv6 | grep -q 'ARM'
+          # Auch hier reisst die Pipe unter `bash -eo pipefail` ohne Meldung ab,
+          # wenn das Binary nicht als ARM erkannt wird.
+          if ! file loadgen-armv6 | grep -q 'ARM'; then
+            echo "::error::loadgen-armv6 fehlt oder ist kein ARM-Binary"
+            exit 1
+          fi
 
       # Das Binary wird auf fremden Systemen gestartet, deshalb hier hart pruefen:
       # kein GLIBC-Symbol darf neuer als die Baseline 2.36 sein.
       - name: Artefakt pruefen
         run: |
           bin=target/arm-unknown-linux-gnueabihf/release/pihole-lite
+          if [ ! -f "$bin" ]; then
+            echo "::error::Binary fehlt: $bin - der Release-Build hat nichts hinterlassen"
+            exit 1
+          fi
           file $bin
           # Der Pi 1 kann ARMv6 und VFPv2. Steht hier wieder v7, ist der Sysroot
           # verrutscht und das Binary behauptet eine CPU, die es nicht gibt.
-          attrs=$(readelf -A $bin)
+          # Ohne `|| true` wuerde ein scheiterndes readelf den Schritt unter
+          # `set -e` verlassen, und zwar ohne eine Zeile im Log.
+          attrs=$(readelf -A $bin || true)
+          if [ -z "$attrs" ]; then
+            echo "::error::readelf lieferte keine ELF-Attribute fuer $bin - Pruefung nicht moeglich"
+            exit 1
+          fi
           for want in 'Tag_CPU_arch: v6' 'Tag_FP_arch: VFPv2'; do
             if ! grep -q "$want" <<< "$attrs"; then
               echo "::error::ELF-Attribut fehlt: $want"
@@ -302,8 +355,16 @@ jobs:
               exit 1
             fi
           done
+          # Ohne Treffer endet die Pipe mit Status 1 und reisst unter `bash -eo
+          # pipefail` den Schritt ohne eine Zeile im Log mit; deshalb der
+          # explizite Fall, statt sich auf einen stillen Abbruch zu verlassen.
           needed=$(strings -a $bin \
-            | grep -o 'GLIBC_[0-9.]*' | sed 's/^GLIBC_//' | sort -uV | tail -1)
+            | grep -o 'GLIBC_[0-9.]*' | sed 's/^GLIBC_//' | sort -uV | tail -1 || true)
+          if [ -z "$needed" ]; then
+            echo "::error::kein GLIBC-Symbol in $bin gefunden - glibc-Baseline nicht pruefbar"
+            file $bin
+            exit 1
+          fi
           echo "hoechste benoetigte glibc: $needed"
           if [ "$(printf '%s\n' 2.36 "$needed" | sort -V | tail -1)" != "2.36" ]; then
             echo "::error::Binary verlangt glibc $needed (> 2.36) und startet auf Raspberry Pi OS nicht"
@@ -333,7 +394,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: armv6
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     permissions:
       contents: write
     steps:

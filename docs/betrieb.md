@@ -21,8 +21,13 @@ Auf dem Pi selbst (dauert dort lange, LTO braucht RAM):
 cargo build --release
 ```
 
-Cross-Build für ARMv6 von einem x86-Rechner (Debian/Ubuntu mit `binutils`, `curl`, `xz`,
-`dpkg-deb` und `gcc-arm-linux-gnueabihf`):
+Cross-Build für ARMv6 von einem x86-Rechner (Debian/Ubuntu). Für `cargo build` selbst
+braucht es nur `gcc-arm-linux-gnueabihf` und einen Host-C-Compiler, also `build-essential`
+bzw. `cc`. Der Host-Compiler gehört dazu, obwohl das Ziel reines Rust ist: Buildscripts
+und Proc-Macros laufen auf dem Build-Rechner, und rustc linkt sie dort mit `cc`. Fehlt
+er, bricht der Build ab, bevor der ARM-Linker überhaupt ins Spiel kommt. `curl`, `xz` und
+`dpkg-deb` gehören dagegen nur zum Sysroot-Rezept unten: ohne sie bleibt der Sysroot
+leer, und der Build scheitert erst am Linker mit fehlenden crt-Objekten und `-lc`.
 
 `gcc-arm-linux-gnueabihf` allein reicht nicht. Seine crt-Objekte und libgcc sind gegen
 ARMv7 + VFPv3 gebaut und tragen das als ELF-Attribut ins Binary; der Pi 1 ist ein
@@ -67,7 +72,8 @@ Umgebung, bevor die Toolchain installiert ist, findet rustc für das eigene Crat
 `std` mehr (E0463), obwohl `rust-std` installiert ist. `RUSTUP_TOOLCHAIN` pinnt die
 Toolchain, in die `rust-std` für ARM ging.
 
-Danach prüfen – beide Zeilen müssen stimmen, sonst ist der Sysroot verrutscht:
+Danach prüfen – beide Zeilen müssen stimmen, sonst ist der Sysroot verrutscht. Das
+`readelf` dafür kommt aus `binutils`, das am Build selbst unbeteiligt ist:
 
 ```sh
 readelf -A target/arm-unknown-linux-gnueabihf/release/pihole-lite \
@@ -79,6 +85,13 @@ readelf -A target/arm-unknown-linux-gnueabihf/release/pihole-lite \
 Dieselben Schritte macht der Job `ARMv6 cross build` in `.github/workflows/ci.yml`
 (inklusive Cache für den Sysroot). Wer direkt auf dem Pi baut, braucht nichts davon:
 dort kommen crt und libgcc ohnehin von Raspberry Pi OS.
+
+Der Job hält dafür einen zweiten Mirror bereit. Liefert `archive.raspbian.org` den Index
+nicht, kommt `mirror.nl.leaseweb.net` zum Zug, und jedes Paket wird beim anderen Mirror
+nachgeladen, wenn es auf dem gewählten hängt (`--retry 3 --max-time 120`); danach bleibt
+der Mirror vorne, der geliefert hat. Die 20 Minuten Laufzeitgrenze des Jobs sind so
+bemessen, dass ein toter erster Mirror (bis 4 × 180 s) den zweiten noch erreicht. Wer
+das Rezept von Hand nachbaut, braucht das nicht: dort genügt ein Mirror.
 
 Das Release-Profil (`opt-level = "s"`, LTO, `panic = "abort"`, `strip`) ist auf Größe
 optimiert. Für den Pi zählt außerdem die glibc des Build-Systems, denn dagegen wird
@@ -99,14 +112,19 @@ das selbst: fehlt eines der beiden Attribute, bricht der Job ab.
 
 ## Checks und Releases
 
-Die CI (`.github/workflows/ci.yml`) läuft bei jedem Push auf `main` und bei Pull Requests:
+Die CI (`.github/workflows/ci.yml`) läuft bei jedem Push auf `main` und auf
+`freebuff/**`-Branches, bei Pull Requests, bei Tags `v*` und von Hand
+(`workflow_dispatch`):
 
-- `fmt, clippy, test` – `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
-  `cargo test`
+- `fmt, clippy, test` – `cargo fmt --all -- --check`, Clippy mit
+  `cargo clippy --all-targets -- -D warnings` und `cargo test`
+- `bench (loadgen, skripte)` – baut `bench/loadgen.rs`, prüft dessen Ausgabe (`mode`,
+  `qps`, `max_ms`), die Syntax von `bench/messung.sh` und `bench/eintragen.sh` und den
+  Tabelleneintrag in `docs/messungen.md`
 - `ARMv6 cross build` – Clippy und Release-Build gegen `arm-unknown-linux-gnueabihf`
-  gegen einen ARMv6-Sysroot, `file`-Prüfung, ELF-Attribute (`Tag_CPU_arch: v6`,
-  `Tag_FP_arch: VFPv2`), glibc-Guard, Paketierung mit `sha256sum`, Upload als
-  Workflow-Artefakt
+  gegen einen ARMv6-Sysroot, dazu der Lastgenerator für ARMv6, `file`-Prüfung,
+  ELF-Attribute (`Tag_CPU_arch: v6`, `Tag_FP_arch: VFPv2`), glibc-Guard, Paketierung mit
+  `sha256sum`, Upload als Workflow-Artefakt
 
 Ein Tag `v*` baut dasselbe Binary und hängt es samt Prüfsumme dauerhaft an das Release:
 
