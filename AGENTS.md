@@ -109,5 +109,8 @@ cargo test
 cargo build --release
 ```
 
-Für den Pi 1: `cargo build --release --target arm-unknown-linux-gnueabihf`
-(ARMv6 + softfloat, passendes Linker-Image vorausgesetzt).
+Für den Pi 1: `cargo build --release --target arm-unknown-linux-gnueabihf` mit dem
+Raspbian-Sysroot und dem Linker-Wrapper aus `docs/betrieb.md` (Abschnitt „Selbst bauen").
+Der Debian-armhf-Linker allein genügt nicht, weil seine crt-Objekte und libgcc ARMv7 +
+VFPv3 als ELF-Attribut ins Binary tragen. Kontrolle danach: `readelf -A` zeigt
+`Tag_CPU_arch: v6` und `Tag_FP_arch: VFPv2`.
