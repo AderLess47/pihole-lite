@@ -330,12 +330,15 @@ impl FilterEngine {
         self.backend.write().unwrap_or_else(|err| err.into_inner())
     }
 
-    /// Fügt eine Domain hinzu.
+    /// Fügt eine Domain hinzu. Nur für Tests: der Produktionspfad baut einen Bestand über
+    /// den Gravity-Builder und tauscht ihn mit [`Self::replace_backend`].
+    #[cfg(test)]
     pub fn add(&self, domain: &str) {
         self.write().add(domain);
     }
 
-    /// Schließt die Aufbauphase ab.
+    /// Schließt die Aufbauphase ab. Nur für Tests, siehe [`Self::add`].
+    #[cfg(test)]
     pub fn seal(&self) {
         self.write().seal();
     }

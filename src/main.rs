@@ -78,7 +78,9 @@ fn main() -> ExitCode {
         // ein Neustart filtert damit sofort, ohne auf Downloads zu warten.
         match gravity.preload(&engine).await {
             Ok(report) => {
-                if report.domains > 0 {
+                // Inline-Einträge zählen als Domain, aber nicht als Quelle: ohne Datei oder
+                // Cache gibt es hier nichts zu melden, das Banner zeigt die Zahl trotzdem.
+                if report.sources > 0 {
                     println!(
                         "[filter] {} domains aus {} lokalen quelle(n)/cache geladen",
                         report.domains, report.sources
@@ -90,10 +92,6 @@ fn main() -> ExitCode {
                 return ExitCode::from(1);
             }
         }
-        for domain in &config.blocklist_entries {
-            engine.add(domain);
-        }
-        engine.seal();
 
         print_banner(&profile, &config, &engine);
         serve(config, engine, gravity).await
