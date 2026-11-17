@@ -6,9 +6,11 @@
 //!    füttern – die Datei liegt nie komplett im Speicher.
 //! 3. `seal` und erst dann per [`FilterEngine::replace_backend`] austauschen.
 //!
-//! Ein Update baut den Bestand **vollständig** neu auf: lokale Dateien, Inline-Einträge
-//! und alle Remote-Listen. Sonst würde der Tausch lokal geladene Domains stillschweigend
-//! verlieren.
+//! Preload und Update bauen den Bestand **vollständig** neu auf: lokale Dateien,
+//! Inline-Einträge und alle Remote-Listen. Sonst würde der Tausch lokal geladene Domains
+//! stillschweigend verlieren. Beide laufen deshalb durch denselben [`Rebuild`]; sie
+//! unterscheiden sich nur darin, woher der Remote-Teil kommt ([`Mode::Offline`] liest
+//! den Platten-Cache, [`Mode::Refresh`] lädt) und was ein leerer Bestand bedeutet.
 //!
 //! # Platten-Cache und Conditional GET
 //!
@@ -46,6 +48,8 @@ use tokio::net::TcpStream;
 use tokio::process::{Child, ChildStdout, Command};
 use tokio::time::timeout;
 use xxhash_rust::xxh3::xxh3_64;
+
+use crate::profiler::Tier;
 
 use super::engine::{backend_for_tier, blocklist_domain_from_line, FilterBackend, FilterEngine};
 
@@ -171,70 +175,12 @@ impl GravityUpdater {
         self.cache.prune(&self.config.urls).await
     }
 
-    /// Baut den Bestand ohne Netzwerkzugriff auf: lokale Dateien plus vorhandene Caches.
+    /// Baut den Bestand ohne Netzwerkzugriff auf: lokale Dateien, Inline-Domains und
+    /// vorhandene Caches.
     ///
     /// Wird vor dem Öffnen des DNS-Sockets aufgerufen, damit ein Neustart sofort filtert.
     pub async fn preload(&self, engine: &FilterEngine) -> Result<UpdateReport, GravityError> {
-        let started = Instant::now();
-        let mut backend = backend_for_tier(engine.tier());
-        let mut totals = Totals::default();
-        let mut sources = 0usize;
-
-        for path in &self.config.local_files {
-            let label = path.display().to_string();
-            let mut source = self.open_local(path).await?;
-            let mut sink = CacheSink::disabled();
-            self.timed_read(
-                source.reader(),
-                backend.as_mut(),
-                &mut totals,
-                &label,
-                &mut sink,
-            )
-            .await?;
-            source.finish(&label).await?;
-            sources += 1;
-        }
-
-        for url in &self.config.urls {
-            let file = match self.cache.open_list(url).await {
-                CachedList::Fresh(file) => file,
-                CachedList::Stale { age } => {
-                    eprintln!(
-                        "[gravity] {url}: cache ist {} alt und wird nicht geladen",
-                        fmt_age(age)
-                    );
-                    continue;
-                }
-                CachedList::Missing => {
-                    if self.config.verbose {
-                        eprintln!("[gravity] {url}: noch kein cache vorhanden");
-                    }
-                    continue;
-                }
-            };
-            let mut reader = BufReader::new(file);
-            let mut sink = CacheSink::disabled();
-            self.timed_read(&mut reader, backend.as_mut(), &mut totals, url, &mut sink)
-                .await?;
-            sources += 1;
-        }
-
-        backend.seal();
-        let domains = backend.len();
-        let heap_bytes = backend.heap_bytes();
-        if domains > 0 {
-            engine.replace_backend(backend);
-        }
-
-        Ok(UpdateReport {
-            domains,
-            lines: totals.lines,
-            skipped: totals.skipped,
-            sources,
-            duration: started.elapsed(),
-            heap_bytes,
-        })
+        self.rebuild(engine, Mode::Offline).await
     }
 
     /// Ein Update-Lauf: alle Quellen in ein frisches Backend streamen und tauschen.
@@ -242,63 +188,7 @@ impl GravityUpdater {
         if self.config.urls.is_empty() {
             return Err(GravityError::NoSources);
         }
-
-        let started = Instant::now();
-        let mut backend = backend_for_tier(engine.tier());
-        let mut totals = Totals::default();
-
-        // 1. Lokale Dateien zuerst: sie sind der Ausgangsbestand, den ein fehlgeschlagener
-        //    Download nicht beschädigen darf.
-        for path in &self.config.local_files {
-            let label = path.display().to_string();
-            let mut source = self.open_local(path).await?;
-            let mut sink = CacheSink::disabled();
-            self.timed_read(
-                source.reader(),
-                backend.as_mut(),
-                &mut totals,
-                &label,
-                &mut sink,
-            )
-            .await?;
-            source.finish(&label).await?;
-        }
-
-        // 2. Remote-Quellen: 304 -> Platten-Cache, 2xx -> Body (und Cache erneuern).
-        for url in &self.config.urls {
-            self.refresh_source(url, backend.as_mut(), &mut totals)
-                .await?;
-        }
-
-        // 3. Inline-Domains aus der Config überleben den Tausch mit.
-        for domain in &self.config.inline {
-            backend.add(domain);
-        }
-
-        backend.seal();
-        let domains = backend.len();
-        if domains == 0 {
-            return Err(GravityError::Empty);
-        }
-        let heap_bytes = backend.heap_bytes();
-        engine.replace_backend(backend);
-
-        // Erst nach erfolgreichem Tausch aufräumen: bis dahin ist der alte Bestand die
-        // Rückfalllinie und seine Dateien dürfen nicht verschwinden.
-        match self.prune_cache().await {
-            Ok(0) => {}
-            Ok(removed) => println!("[gravity] {removed} verwaiste cache-datei(en) entfernt"),
-            Err(err) => eprintln!("[gravity] cache-aufräumen fehlgeschlagen: {err}"),
-        }
-
-        Ok(UpdateReport {
-            domains,
-            lines: totals.lines,
-            skipped: totals.skipped,
-            sources: self.config.urls.len() + self.config.local_files.len(),
-            duration: started.elapsed(),
-            heap_bytes,
-        })
+        self.rebuild(engine, Mode::Refresh).await
     }
 
     /// Hintergrund-Task: erstes Update sofort, danach im konfigurierten Intervall.
@@ -328,6 +218,7 @@ impl GravityUpdater {
 }
 
 include!("gravity_parts/updater_sources.rs");
+include!("gravity_parts/rebuild.rs");
 include!("gravity_parts/source.rs");
 include!("gravity_parts/stream.rs");
 include!("gravity_parts/cache.rs");
