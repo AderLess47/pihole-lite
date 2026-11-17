@@ -34,6 +34,68 @@ jobs:
       - name: Tests
         run: cargo test
 
+  # bench/ liegt ausserhalb des Crate-Baums: `cargo fmt`, `clippy` und `test`
+  # sehen den Lastgenerator und die Messskripte nicht. Ohne diesen Job faellt ein
+  # kaputtes bench/ erst auf dem Pi auf, wenn gemessen werden soll.
+  bench:
+    name: bench (loadgen, skripte)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Rust-Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Lastgenerator bauen
+        run: rustc -O --edition 2021 -D warnings bench/loadgen.rs -o loadgen
+
+      # Der Lastgenerator wird von messung.sh aufgerufen; bricht seine
+      # Argument- oder Ausgabeschnittstelle, scheitert die Messung erst dort.
+      - name: Lastgenerator rauchen
+        run: |
+          ./loadgen --help
+          if ./loadgen --mode quatsch; then
+            echo "::error::loadgen akzeptiert einen unbekannten Modus"
+            exit 1
+          fi
+          ./loadgen --server 127.0.0.1:9 --seconds 1 --threads 2 --mode blocked > loadgen.txt
+          cat loadgen.txt
+          grep -q '^mode=blocked$' loadgen.txt
+          grep -q '^qps=' loadgen.txt
+          grep -q '^max_ms=' loadgen.txt
+
+      - name: Skripte syntaktisch pruefen
+        run: |
+          bash -n bench/messung.sh
+          bash -n bench/eintragen.sh
+
+      # Prueft den Weg von ergebnis.md in die Doku, ohne Server und ohne Last:
+      # genau der Teil, der auf dem Pi still danebengehen wuerde.
+      - name: Tabelleneintrag pruefen
+        run: |
+          printf '%s\n' \
+            '# Messergebnis' \
+            '' \
+            '| Lauf | Domains | RSS idle (MiB) | Peak idle (MiB) | RSS Last (MiB) | Peak Last (MiB) | QPS |' \
+            '|---|---|---|---|---|---|---|' \
+            '| Weiterleitung (leere Liste) | 0 | 1.2 | 1.2 | 1.4 | 1.4 | 250.0 |' \
+            '| 100k Domains (Sinkhole) | 100000 | 11.0 | 11.0 | 11.0 | 11.0 | 40000.0 |' \
+            '' \
+            'Tier pro Lauf:' \
+            '' \
+            '| Lauf | Tier | QPS |' \
+            '|---|---|---|' \
+            '| 100k Domains (Sinkhole) | Tier 1 (Nano) | 40000.0 |' \
+            > /tmp/ergebnis.md
+          bash bench/eintragen.sh /tmp/ergebnis.md
+          grep -q '| 100k Domains (Sinkhole) | 100000 | 11.0 | 11.0 | 11.0 | 11.0 | 40000.0 |' \
+            docs/messungen.md
+          if grep -q '^| 100k Domains (Sinkhole) | Tier 1' docs/messungen.md; then
+            echo "::error::die Tier-Tabelle ist in die Messwerte geraten"
+            exit 1
+          fi
+
   # Zielhost ist ein Raspberry Pi 1 (ARM1176, ARMv6, hard-float). Ein x86-Build
   # prueft weder Feature-Set noch Linker, deshalb hier ein echter Cross-Build
   # gegen arm-unknown-linux-gnueabihf mit dem Release-Profil.
