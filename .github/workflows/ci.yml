@@ -143,6 +143,17 @@ jobs:
       - name: Release-Build
         run: cargo build --release --target arm-unknown-linux-gnueabihf
 
+      # Der Lastgenerator laeuft auf dem Pi selbst, nicht auf dem Messrechner.
+      # Auf x86 gebaut zeigen sich 32-Bit-Eigenheiten (Groessentypen, Linker)
+      # sonst erst dort, mitten in der Messung.
+      - name: Lastgenerator ARMv6 bauen
+        run: |
+          rustc -O --edition 2021 --target arm-unknown-linux-gnueabihf \
+            -C linker=arm-linux-gnueabihf-gcc -D warnings \
+            bench/loadgen.rs -o loadgen-armv6
+          file loadgen-armv6
+          file loadgen-armv6 | grep -q 'ARM'
+
       # Das Binary wird auf fremden Systemen gestartet, deshalb hier hart pruefen:
       # kein GLIBC-Symbol darf neuer als die Baseline 2.36 sein.
       - name: Artefakt pruefen
