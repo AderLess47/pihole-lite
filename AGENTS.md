@@ -25,8 +25,8 @@ gemessen, nicht an Bequemlichkeit.
 7. **Konfiguration** kommt aus `config.toml` bzw. CLI-Flags, nicht aus verstreuten
    Konstanten.
 8. **Modulstruktur bleibt:** `config.rs` (Defaults, TOML, CLI-Flags), `dns/` (server,
-   upstream, cache), `filter/` (engine, gravity), `stats/` (ringbuffer), `web/` (api,
-   static). Präzedenz und Bereichsprüfungen der Konfiguration stehen ausschließlich in
+   resolve, upstream, cache), `filter/` (engine, gravity), `stats/` (ringbuffer), `web/`
+   (api, static). Präzedenz und Bereichsprüfungen der Konfiguration stehen ausschließlich in
    `config.rs`; `main.rs` verdrahtet nur.
 
 ## Statistik & API
