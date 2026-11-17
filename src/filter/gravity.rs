@@ -2,15 +2,15 @@
 //!
 //! Ablauf eines Updates:
 //! 1. Ein frisches Backend desselben Tiers aufbauen (das alte bleibt währenddessen aktiv).
-//! 2. Jede Quelle über [`AsyncBufRead`] zeilenweise lesen, Parser direkt in das Backend
+//! 2. Jede Quelle über `AsyncBufRead` zeilenweise lesen, Parser direkt in das Backend
 //!    füttern – die Datei liegt nie komplett im Speicher.
 //! 3. `seal` und erst dann per [`FilterEngine::replace_backend`] austauschen.
 //!
 //! Preload und Update bauen den Bestand **vollständig** neu auf: lokale Dateien,
 //! Inline-Einträge und alle Remote-Listen. Sonst würde der Tausch lokal geladene Domains
-//! stillschweigend verlieren. Beide laufen deshalb durch denselben [`Rebuild`]; sie
-//! unterscheiden sich nur darin, woher der Remote-Teil kommt ([`Mode::Offline`] liest
-//! den Platten-Cache, [`Mode::Refresh`] lädt) und was ein leerer Bestand bedeutet.
+//! stillschweigend verlieren. Beide laufen deshalb durch denselben `Rebuild`; sie
+//! unterscheiden sich nur darin, woher der Remote-Teil kommt (`Mode::Offline` liest den
+//! Platten-Cache, `Mode::Refresh` lädt) und was ein leerer Bestand bedeutet.
 //!
 //! # Platten-Cache und Conditional GET
 //!
@@ -27,31 +27,37 @@
 //!
 //! # Transport
 //!
-//! `http://` wird nativ über [`TcpStream`] gelesen (HTTP/1.0 + `Connection: close`, damit
+//! `http://` wird nativ über `TcpStream` gelesen (HTTP/1.0 + `Connection: close`, damit
 //! der Body mit dem Socket endet und kein Chunked-Parser nötig ist). `https://` geht durch
 //! einen externen Fetcher (Default: `curl -fsSL`), dessen stdout über denselben
 //! Streaming-Parser läuft – TLS-Stacks sind auf ARMv6/256 MB nicht vertretbar, und der
 //! Download ist ein periodischer Job, kein Hot Path.
+//!
+//! # Modulschnitt
+//!
+//! `gravity.rs` hält Config, Fehler und den Updater; alles andere liegt in
+//! Untermodulen: `update` (Quellen öffnen und streamen), `rebuild` (der gemeinsame
+//! Neuaufbau), `stream` (Zeilenparser), `source` (offene Quelle + Cache-Senke), `cache`
+//! (Platten-Cache, Validatoren) und `http` (Request, Statuszeile, URL).
 
-use std::collections::HashSet;
+mod cache;
+mod http;
+mod rebuild;
+mod source;
+mod stream;
+#[cfg(test)]
+mod tests;
+mod update;
+
 use std::fmt;
 use std::io;
-use std::path::{Path, PathBuf};
-use std::pin::Pin;
-use std::process::Stdio;
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::Duration;
 
-use tokio::fs::File;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpStream;
-use tokio::process::{Child, ChildStdout, Command};
-use tokio::time::timeout;
-use xxhash_rust::xxh3::xxh3_64;
-
-use crate::profiler::Tier;
-
-use super::engine::{backend_for_tier, blocklist_domain_from_line, FilterBackend, FilterEngine};
+use self::cache::GravityCache;
+use self::rebuild::Mode;
+use super::engine::FilterEngine;
 
 /// Längste Zeile, die als Blocklisten-Eintrag akzeptiert wird. Alles darüber wird
 /// verworfen, statt den Zeilenpuffer wachsen zu lassen.
@@ -215,26 +221,4 @@ impl GravityUpdater {
             tokio::time::sleep(self.config.interval).await;
         }
     }
-}
-
-include!("gravity_parts/updater_sources.rs");
-include!("gravity_parts/rebuild.rs");
-include!("gravity_parts/source.rs");
-include!("gravity_parts/stream.rs");
-include!("gravity_parts/cache.rs");
-include!("gravity_parts/http.rs");
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::profiler::Tier;
-    use std::net::SocketAddr;
-    use std::sync::Mutex;
-    use tokio::io::AsyncReadExt;
-    use tokio::net::TcpListener;
-
-    include!("gravity_parts/tests_helpers.rs");
-    include!("gravity_parts/tests_http.rs");
-    include!("gravity_parts/tests_cache.rs");
-    include!("gravity_parts/tests_update.rs");
 }

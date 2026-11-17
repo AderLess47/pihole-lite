@@ -1,16 +1,27 @@
+//! Zeilenweise ins Backend: `fill_buf`/`consume` statt `read_line`, damit auch eine
+//! riesige Zeile den Puffer nicht wachsen lässt.
+
+use std::io;
+use std::pin::Pin;
+
+use tokio::io::{AsyncBufRead, AsyncBufReadExt};
+
+use super::source::CacheSink;
+use super::MAX_LINE_BYTES;
+use crate::filter::engine::{blocklist_domain_from_line, FilterBackend};
 
 #[derive(Debug, Default)]
-struct Totals {
-    lines: u64,
-    accepted: u64,
-    skipped: u64,
+pub(super) struct Totals {
+    pub(super) lines: u64,
+    pub(super) accepted: u64,
+    pub(super) skipped: u64,
 }
 
 /// Liest den Stream zeilenweise und füttert das Backend.
 ///
 /// Nutzt `fill_buf`/`consume`, damit auch sehr lange Zeilen den Speicher nicht sprengen:
 /// Zeilen über [`MAX_LINE_BYTES`] werden verworfen, statt den Puffer zu vergrößern.
-async fn consume_source(
+pub(super) async fn consume_source(
     reader: &mut (dyn AsyncBufRead + Unpin + Send),
     backend: &mut dyn FilterBackend,
     totals: &mut Totals,

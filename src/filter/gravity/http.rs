@@ -1,13 +1,24 @@
+//! `http://`-Transport: Request schreiben, Statuszeile und Header lesen.
+//!
+//! HTTP/1.0 plus `Connection: close` heißt: der Body endet mit dem Socket, es gibt kein
+//! Chunked-Framing. Chunked-Antworten werden deshalb abgelehnt statt falsch geparst.
+
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpStream;
+use tokio::time::timeout;
+
+use super::cache::Validators;
+use super::{GravityError, CONNECT_TIMEOUT, MAX_HEADER_BYTES};
 
 /// Gelesene Response-Header.
-struct ResponseHead {
-    status: u16,
-    etag: Option<String>,
-    last_modified: Option<String>,
+pub(super) struct ResponseHead {
+    pub(super) status: u16,
+    pub(super) etag: Option<String>,
+    pub(super) last_modified: Option<String>,
 }
 
 impl ResponseHead {
-    fn validators(&self) -> Validators {
+    pub(super) fn validators(&self) -> Validators {
         Validators {
             etag: self.etag.clone(),
             last_modified: self.last_modified.clone(),
@@ -19,7 +30,7 @@ impl ResponseHead {
 ///
 /// Der Body bleibt im `BufReader` gepuffert und wird von dort gestreamt. HTTP/1.0 +
 /// `Connection: close` heißt: der Body endet mit dem Socket, kein Chunked-Framing.
-async fn open_http(
+pub(super) async fn open_http(
     raw: &str,
     validators: Option<&Validators>,
 ) -> Result<(BufReader<TcpStream>, ResponseHead), GravityError> {
@@ -161,15 +172,15 @@ fn parse_status_line(line: &str) -> Option<u16> {
 }
 
 /// Zerlegte `http://`-URL.
-struct HttpUrl {
-    host: String,
-    port: u16,
-    path: String,
-    authority: String,
+pub(super) struct HttpUrl {
+    pub(super) host: String,
+    pub(super) port: u16,
+    pub(super) path: String,
+    pub(super) authority: String,
 }
 
 impl HttpUrl {
-    fn parse(raw: &str) -> Result<Self, GravityError> {
+    pub(super) fn parse(raw: &str) -> Result<Self, GravityError> {
         let rest = raw
             .strip_prefix("http://")
             .ok_or_else(|| GravityError::UnsupportedScheme(raw.to_owned()))?;

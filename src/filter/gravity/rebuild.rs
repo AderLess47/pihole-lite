@@ -1,6 +1,20 @@
+//! Ein kompletter Neuaufbau des Bestands: lokale Dateien, Remote-Teil, Inline-Domains,
+//! `seal` – und erst dann der Tausch.
+
+use std::time::Instant;
+
+use tokio::io::BufReader;
+
+use super::cache::{fmt_age, CachedList};
+use super::source::CacheSink;
+use super::stream::Totals;
+use super::{GravityError, GravityUpdater, UpdateReport};
+use crate::filter::engine::{backend_for_tier, FilterBackend, FilterEngine};
+use crate::profiler::Tier;
+
 /// Wie ein Neuaufbau den Remote-Teil behandelt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Mode {
+pub(super) enum Mode {
     /// Start: lokale Dateien und vorhandene Caches, kein Netzwerkzugriff.
     Offline,
     /// Update: lokale Dateien, dann Remote-Quellen mit Cache-Revalidierung.
@@ -22,7 +36,7 @@ struct Rebuild<'a> {
 }
 
 impl<'a> Rebuild<'a> {
-    fn new(updater: &'a GravityUpdater, tier: Tier) -> Self {
+    pub(super) fn new(updater: &'a GravityUpdater, tier: Tier) -> Self {
         Self {
             updater,
             backend: backend_for_tier(tier),
@@ -33,7 +47,7 @@ impl<'a> Rebuild<'a> {
 
     /// Lokale Dateien: der Ausgangsbestand, den ein fehlgeschlagener Download nicht
     /// beschädigen darf.
-    async fn local_files(&mut self) -> Result<(), GravityError> {
+    pub(super) async fn local_files(&mut self) -> Result<(), GravityError> {
         let updater = self.updater;
         for path in &updater.config.local_files {
             let label = path.display().to_string();
@@ -56,7 +70,7 @@ impl<'a> Rebuild<'a> {
 
     /// Vorhandene Cache-Listen, ohne Netzwerk. Fehlende oder zu alte Caches werden
     /// übersprungen – dafür gibt es das spätere Update.
-    async fn cached_lists(&mut self) -> Result<(), GravityError> {
+    pub(super) async fn cached_lists(&mut self) -> Result<(), GravityError> {
         let updater = self.updater;
         for url in &updater.config.urls {
             let file = match updater.cache.open_list(url).await {
@@ -93,7 +107,7 @@ impl<'a> Rebuild<'a> {
 
     /// Remote-Quellen mit Netzwerk: `304` nutzt die Cache-Liste, `2xx` streamt und
     /// erneuert sie.
-    async fn remote(&mut self) -> Result<(), GravityError> {
+    pub(super) async fn remote(&mut self) -> Result<(), GravityError> {
         let updater = self.updater;
         for url in &updater.config.urls {
             updater
@@ -106,14 +120,14 @@ impl<'a> Rebuild<'a> {
 
     /// Inline-Domains aus der Config. Sie gehören in jeden Aufbau, sonst verliert der
     /// Tausch sie.
-    fn inline_domains(&mut self) {
+    pub(super) fn inline_domains(&mut self) {
         for domain in &self.updater.config.inline {
             self.backend.add(domain);
         }
     }
 
     /// `seal` plus die Kennzahlen des Laufs; ob getauscht wird, entscheidet der Aufrufer.
-    fn finish(mut self, started: Instant) -> (Box<dyn FilterBackend>, UpdateReport) {
+    pub(super) fn finish(mut self, started: Instant) -> (Box<dyn FilterBackend>, UpdateReport) {
         self.backend.seal();
         let stats = self.backend.stats();
         let report = UpdateReport {
@@ -130,7 +144,7 @@ impl<'a> Rebuild<'a> {
 
 impl GravityUpdater {
     /// Baut den Bestand neu auf und tauscht ihn erst nach Erfolg in die Engine.
-    async fn rebuild(
+    pub(super) async fn rebuild(
         &self,
         engine: &FilterEngine,
         mode: Mode,

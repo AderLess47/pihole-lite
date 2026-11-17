@@ -1,6 +1,24 @@
+//! Quellen öffnen und in das Backend streamen: lokal, `http://` und über den Fetcher.
+
+use std::io;
+use std::path::Path;
+use std::process::Stdio;
+
+use tokio::fs::File;
+use tokio::io::{AsyncBufRead, AsyncWriteExt, BufReader};
+use tokio::process::Command;
+use tokio::time::timeout;
+
+use super::cache::{fmt_age, CachedList};
+use super::http::open_http;
+use super::source::{CacheSink, Source};
+use super::stream::{consume_source, Totals};
+use super::{GravityError, GravityUpdater, DEFAULT_FETCHER};
+use crate::filter::engine::FilterBackend;
+
 impl GravityUpdater {
     /// Holt eine Remote-Quelle und schreibt sie ins Backend (und in den Cache).
-    async fn refresh_source(
+    pub(super) async fn refresh_source(
         &self,
         url: &str,
         backend: &mut dyn FilterBackend,
@@ -83,7 +101,7 @@ impl GravityUpdater {
     ///
     /// Cache-Fehler (voller Datenträger, keine Rechte) sind nicht fatal: die Domainliste
     /// im RAM ist dann trotzdem vollständig, nur die Persistenz fehlt.
-    async fn stream_into_backend(
+    pub(super) async fn stream_into_backend(
         &self,
         reader: &mut (dyn AsyncBufRead + Unpin + Send),
         backend: &mut dyn FilterBackend,
@@ -148,7 +166,7 @@ impl GravityUpdater {
     }
 
     /// Liest eine bereits geöffnete Quelle mit Gesamt-Timeout.
-    async fn timed_read(
+    pub(super) async fn timed_read(
         &self,
         reader: &mut (dyn AsyncBufRead + Unpin + Send),
         backend: &mut dyn FilterBackend,
@@ -169,7 +187,7 @@ impl GravityUpdater {
     }
 
     /// Öffnet eine lokale Blockliste.
-    async fn open_local(&self, path: &Path) -> Result<Source, GravityError> {
+    pub(super) async fn open_local(&self, path: &Path) -> Result<Source, GravityError> {
         let file = File::open(path).await.map_err(|err| GravityError::Local {
             path: path.display().to_string(),
             reason: err.to_string(),
@@ -178,7 +196,7 @@ impl GravityUpdater {
     }
 
     /// HTTPS über einen externen Fetcher; stdout wird gestreamt, nicht gesammelt.
-    async fn open_via_fetcher(&self, url: &str) -> Result<Source, GravityError> {
+    pub(super) async fn open_via_fetcher(&self, url: &str) -> Result<Source, GravityError> {
         let template = self.config.fetcher.as_deref().unwrap_or(DEFAULT_FETCHER);
         let mut parts = template.split_whitespace();
         let program = parts.next().ok_or_else(|| GravityError::Http {

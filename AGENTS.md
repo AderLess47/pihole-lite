@@ -25,8 +25,8 @@ gemessen, nicht an Bequemlichkeit.
 7. **Konfiguration** kommt aus `config.toml` bzw. CLI-Flags, nicht aus verstreuten
    Konstanten.
 8. **Modulstruktur bleibt:** `config.rs` (Defaults, TOML, CLI-Flags), `dns/` (server,
-   resolve, upstream, cache), `filter/` (engine, gravity), `stats/` (ringbuffer), `web/`
-   (api, static). Präzedenz und Bereichsprüfungen der Konfiguration stehen ausschließlich in
+   resolve, upstream, cache), `filter/` (engine, gravity mit update, rebuild, stream,
+   source, cache, http), `stats/` (ringbuffer), `web/` (api, static). Präzedenz und Bereichsprüfungen der Konfiguration stehen ausschließlich in
    `config.rs`; `main.rs` verdrahtet nur.
 
 ## Statistik & API
@@ -84,9 +84,8 @@ Lauf lässt den vorherigen Bestand unangetastet.
 
 Persistenz: pro Quelle liegen `<hash>.list` und `<hash>.meta` unter `gravity_cache_dir`.
 `preload` baut den Bestand daraus **ohne Netzwerk** auf, bevor der DNS-Socket aufgeht.
-Preload und Update laufen durch denselben Aufbau (`Rebuild` in
-`gravity_parts/rebuild.rs`): lokale Dateien, dann der Remote-Teil, zuletzt die
-Inline-Domains. Unterschiedlich sind nur die Quelle des Remote-Teils (Platten-Cache vs.
+Preload und Update laufen durch denselben Aufbau (`Rebuild` in `gravity/rebuild.rs`):
+lokale Dateien, dann der Remote-Teil, zuletzt die Inline-Domains. Unterschiedlich sind nur die Quelle des Remote-Teils (Platten-Cache vs.
 Download) und die Bedeutung eines leeren Bestands (Start: egal, Update: Fehler). Deshalb
 muss `main` nach `preload` keine Inline-Domains nachtragen.
 `http://`-Quellen werden mit `If-None-Match` / `If-Modified-Since` revalidiert; ein `304`

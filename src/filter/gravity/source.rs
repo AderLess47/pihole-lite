@@ -1,9 +1,16 @@
+//! Offene Quelle und die Senke, die akzeptierte Domains in den Cache spiegelt.
+
+use tokio::fs::File;
+use tokio::io::{AsyncBufRead, AsyncWriteExt, BufReader};
+use tokio::process::{Child, ChildStdout};
+
+use super::GravityError;
 
 /// Offene Quelle: lokale Datei oder Fetcher-Prozess.
 ///
-/// HTTP-Quellen werden direkt in [`GravityUpdater::refresh_source`] gelesen, weil dort
+/// HTTP-Quellen werden direkt in `GravityUpdater::refresh_source` gelesen, weil dort
 /// Statuscode und Validatoren gebraucht werden.
-enum Source {
+pub(super) enum Source {
     File(BufReader<File>),
     Fetcher {
         reader: BufReader<ChildStdout>,
@@ -12,7 +19,7 @@ enum Source {
 }
 
 impl Source {
-    fn reader(&mut self) -> &mut (dyn AsyncBufRead + Unpin + Send) {
+    pub(super) fn reader(&mut self) -> &mut (dyn AsyncBufRead + Unpin + Send) {
         match self {
             Self::File(reader) => reader,
             Self::Fetcher { reader, .. } => reader,
@@ -20,7 +27,7 @@ impl Source {
     }
 
     /// Schließt die Quelle ab und prüft bei einem Fetcher den Exit-Status.
-    async fn finish(self, url: &str) -> Result<(), GravityError> {
+    pub(super) async fn finish(self, url: &str) -> Result<(), GravityError> {
         match self {
             Self::File(_) => Ok(()),
             Self::Fetcher { mut child, .. } => {
@@ -39,20 +46,20 @@ impl Source {
 
 /// Senke für die Cache-Datei: schreibt akzeptierte Domains mit, ohne den Update-Lauf
 /// an einen Schreibfehler zu binden.
-struct CacheSink<'a> {
-    file: Option<&'a mut File>,
-    failed: bool,
+pub(super) struct CacheSink<'a> {
+    pub(super) file: Option<&'a mut File>,
+    pub(super) failed: bool,
 }
 
 impl<'a> CacheSink<'a> {
-    fn disabled() -> Self {
+    pub(super) fn disabled() -> Self {
         Self {
             file: None,
             failed: false,
         }
     }
 
-    async fn write_bytes(&mut self, bytes: &[u8]) {
+    pub(super) async fn write_bytes(&mut self, bytes: &[u8]) {
         let Some(file) = self.file.as_mut() else {
             return;
         };

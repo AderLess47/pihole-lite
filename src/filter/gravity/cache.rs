@@ -1,17 +1,29 @@
+//! Platten-Cache: pro Quelle eine Liste plus Validatoren, dazu das Alterslimit.
+//!
+//! Der Cache ist nie kritisch: fehlt er oder ist er nicht schreibbar, läuft der Lauf
+//! weiter und nur die Persistenz fehlt.
+
+use std::collections::HashSet;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
+
+use tokio::fs::File;
+use xxhash_rust::xxh3::xxh3_64;
 
 /// Validatoren einer HTTP-Antwort für Conditional GET.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-struct Validators {
-    etag: Option<String>,
-    last_modified: Option<String>,
+pub(super) struct Validators {
+    pub(super) etag: Option<String>,
+    pub(super) last_modified: Option<String>,
 }
 
 impl Validators {
-    fn is_empty(&self) -> bool {
+    pub(super) fn is_empty(&self) -> bool {
         self.etag.is_none() && self.last_modified.is_none()
     }
 
-    fn serialize(&self, url: &str) -> String {
+    pub(super) fn serialize(&self, url: &str) -> String {
         let mut out = String::with_capacity(128);
         out.push_str("url\t");
         out.push_str(&hex_encode(url));
@@ -30,7 +42,7 @@ impl Validators {
     }
 
     /// `None`, wenn das Meta-File zu einer anderen URL gehört oder unlesbar ist.
-    fn parse(text: &str, url: &str) -> Option<Self> {
+    pub(super) fn parse(text: &str, url: &str) -> Option<Self> {
         let mut stored_url = None;
         let mut etag = None;
         let mut last_modified = None;
@@ -83,7 +95,7 @@ fn hex_decode(value: &str) -> Option<String> {
 }
 
 /// Zustand der Cache-Liste einer URL.
-enum CachedList {
+pub(super) enum CachedList {
     /// Existiert und ist jünger als das Maximalalter.
     Fresh(File),
     /// Existiert, ist aber zu alt: wird weder geladen noch revalidiert.
@@ -93,18 +105,18 @@ enum CachedList {
 }
 
 /// Platten-Cache: pro URL eine Liste und ein Meta-File mit den Validatoren.
-struct GravityCache {
+pub(super) struct GravityCache {
     dir: Option<PathBuf>,
     max_age: Option<Duration>,
 }
 
 impl GravityCache {
-    fn new(dir: Option<PathBuf>, max_age: Option<Duration>) -> Self {
+    pub(super) fn new(dir: Option<PathBuf>, max_age: Option<Duration>) -> Self {
         Self { dir, max_age }
     }
 
     /// `(list_path, meta_path)`; `None`, wenn Persistenz abgeschaltet ist.
-    fn paths(&self, url: &str) -> Option<(PathBuf, PathBuf)> {
+    pub(super) fn paths(&self, url: &str) -> Option<(PathBuf, PathBuf)> {
         let dir = self.dir.as_ref()?;
         let hash = cache_hash(url);
         Some((
@@ -113,20 +125,24 @@ impl GravityCache {
         ))
     }
 
-    async fn ensure_dir(&self) -> io::Result<()> {
+    pub(super) async fn ensure_dir(&self) -> io::Result<()> {
         if let Some(dir) = &self.dir {
             tokio::fs::create_dir_all(dir).await?;
         }
         Ok(())
     }
 
-    async fn validators(&self, url: &str) -> Option<Validators> {
+    pub(super) async fn validators(&self, url: &str) -> Option<Validators> {
         let (_, meta_path) = self.paths(url)?;
         let text = tokio::fs::read_to_string(&meta_path).await.ok()?;
         Validators::parse(&text, url)
     }
 
-    async fn store_validators(&self, url: &str, validators: &Validators) -> io::Result<()> {
+    pub(super) async fn store_validators(
+        &self,
+        url: &str,
+        validators: &Validators,
+    ) -> io::Result<()> {
         let Some((_, meta_path)) = self.paths(url) else {
             return Ok(());
         };
@@ -137,7 +153,7 @@ impl GravityCache {
     }
 
     /// Öffnet die Cache-Liste und prüft ihr Alter anhand der mtime.
-    async fn open_list(&self, url: &str) -> CachedList {
+    pub(super) async fn open_list(&self, url: &str) -> CachedList {
         let Some((list_path, _)) = self.paths(url) else {
             return CachedList::Missing;
         };
@@ -163,7 +179,7 @@ impl GravityCache {
 
     /// Entfernt Cache-Dateien, die zu keiner konfigurierten URL mehr gehören, und
     /// liegengebliebene `.tmp`-Reste abgebrochener Läufe.
-    async fn prune(&self, urls: &[String]) -> io::Result<usize> {
+    pub(super) async fn prune(&self, urls: &[String]) -> io::Result<usize> {
         let Some(dir) = self.dir.as_ref() else {
             return Ok(0);
         };
@@ -196,7 +212,10 @@ impl GravityCache {
     }
 
     /// Legt eine temporäre Datei an; erst nach erfolgreichem Lesen wird sie committet.
-    async fn create_temp(&self, url: &str) -> io::Result<Option<(File, PathBuf, PathBuf)>> {
+    pub(super) async fn create_temp(
+        &self,
+        url: &str,
+    ) -> io::Result<Option<(File, PathBuf, PathBuf)>> {
         let Some((list_path, _)) = self.paths(url) else {
             return Ok(None);
         };
@@ -206,7 +225,7 @@ impl GravityCache {
         Ok(Some((file, tmp, list_path)))
     }
 
-    async fn commit(&self, tmp: &Path, final_path: &Path) -> io::Result<()> {
+    pub(super) async fn commit(&self, tmp: &Path, final_path: &Path) -> io::Result<()> {
         tokio::fs::rename(tmp, final_path).await
     }
 }
@@ -229,7 +248,7 @@ fn cache_hash_from_file_name(name: &str) -> Option<&str> {
     }
 }
 
-fn fmt_age(age: Duration) -> String {
+pub(super) fn fmt_age(age: Duration) -> String {
     let seconds = age.as_secs();
     if seconds < 3600 {
         format!("{} min", seconds / 60)
