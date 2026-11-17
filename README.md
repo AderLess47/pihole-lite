@@ -16,7 +16,7 @@ Web-Framework, kein TLS-Stack, keine Runtime-Abhängigkeiten außer `libc`.
 Das Tier wählt `src/profiler.rs` beim Start anhand von `/proc/meminfo` – die einzige
 Stelle im Code, die RAM-Grenzen kennt.
 
-## Installation auf dem Pi (v0.2.0)
+## Installation auf dem Pi (v0.2.1)
 
 Voraussetzungen: Raspberry Pi OS / Debian **armhf** (hard-float), `curl` für
 `https://`-Blocklisten, Port 53 frei.
@@ -25,14 +25,15 @@ Voraussetzungen: Raspberry Pi OS / Debian **armhf** (hard-float), `curl` für
 
 ```sh
 mkdir -p /tmp/pihole-lite && cd /tmp/pihole-lite
-wget https://github.com/AderLess47/pihole-lite/releases/download/v0.2.0/pihole-lite-armv6
-wget https://github.com/AderLess47/pihole-lite/releases/download/v0.2.0/pihole-lite-armv6.sha256
+wget https://github.com/AderLess47/pihole-lite/releases/download/v0.2.1/pihole-lite-armv6
+wget https://github.com/AderLess47/pihole-lite/releases/download/v0.2.1/pihole-lite-armv6.sha256
 sha256sum -c pihole-lite-armv6.sha256
 ```
 
 Erwartet: `pihole-lite-armv6: OK`. Die Prüfsumme des Release-Assets ist
-`6244e33b4b4e49b984b68e0317551bb6eb08a7f2773ea1360242867f2ddd1499` (818.440 Bytes,
-`ELF 32-bit LSB pie executable, ARM, EABI5`, hard-float, gestrippt). Das Binary ist eine
+`beca9e8eb2fe92fd4f24ca4f98727ebe14dd0ceee3b14c6a5f36a97b0709173b` (828.184 Bytes,
+`ELF 32-bit LSB pie executable, ARM, EABI5`, hard-float mit `Tag_CPU_arch: v6` und
+`Tag_FP_arch: VFPv2`, gestrippt). Das Binary ist eine
 einzelne Datei, dynamisch gegen glibc gelinkt; das neueste benötigte Symbol ist
 `GLIBC_2.34`. Es läuft damit auf Raspberry Pi OS Bookworm (auch dem 32-Bit-Image für
 Pi 1/Zero) und allem Neueren — unter Bullseye braucht es einen eigenen Build. Benötigt
@@ -74,7 +75,7 @@ journalctl -u pihole-lite -f
 Im Journal steht der Startbanner mit Tier, Domain-Anzahl, Listener und Upstreams:
 
 ```
-pihole-lite 0.2.0
+pihole-lite 0.2.1
   hardware : 246 MiB RAM (180 MiB frei), 1 Kern(e), 1 Worker
   tier     : Tier 1 (Nano) -> nanohash (sorted xxh3-64)
   filter   : 61234 domains, ~512 KiB heap
