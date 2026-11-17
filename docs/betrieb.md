@@ -59,7 +59,7 @@ Die CI (`.github/workflows/ci.yml`) läuft bei jedem Push auf `main` und bei Pul
 Ein Tag `v*` baut dasselbe Binary und hängt es samt Prüfsumme dauerhaft an das Release:
 
 ```sh
-git tag v0.2.0 && git push origin v0.2.0
+git tag v0.2.1 && git push origin v0.2.1
 ```
 
 Der Release-Job (`softprops/action-gh-release`) veröffentlicht nur das geprüfte Artefakt
