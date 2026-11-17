@@ -35,8 +35,6 @@ pub trait FilterBackend: Send + Sync {
     fn heap_bytes(&self) -> usize;
 }
 
-/// Normalisiert eine Domain: trimmt, entfernt führende/abschließende Punkte und
-/// gibt sie in Kleinschreibung zurück. Borrowed, wenn nichts zu ändern war.
 /// Aktuelle Unix-Zeit in Sekunden (0, falls die Uhr vor 1970 steht).
 fn unix_seconds() -> u64 {
     SystemTime::now()
@@ -45,6 +43,8 @@ fn unix_seconds() -> u64 {
         .unwrap_or(0)
 }
 
+/// Normalisiert eine Domain: trimmt, entfernt führende/abschließende Punkte und
+/// gibt sie in Kleinschreibung zurück. Borrowed, wenn nichts zu ändern war.
 pub fn normalize(domain: &str) -> Cow<'_, str> {
     let trimmed = domain.trim();
     let trimmed = trimmed
