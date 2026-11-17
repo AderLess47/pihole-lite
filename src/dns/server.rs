@@ -1,19 +1,23 @@
-//! UDP-Listener auf Port 53: parsen, filtern, beantworten oder weiterleiten.
+//! UDP-Listener auf Port 53: Socket, Semaphor und Senden.
 //!
 //! Jede Query läuft in einem eigenen Task, aber nur solange ein Permit des Semaphors
 //! frei ist. Das ist die Rückstau-Bremse: ohne sie könnten 500 parallele Clients auf
 //! einem Pi 1 den Heap sprengen.
+//!
+//! Wie eine Query beantwortet wird, entscheidet [`DnsServer::resolve`] in
+//! [`super::resolve`]; hier bleibt nur der Loop: Bytes empfangen, Ergebnis senden,
+//! Verdict buchen, weitergeleitete Antworten in den Cache legen.
 
 use std::io;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use simple_dns::rdata::{RData, A, AAAA};
-use simple_dns::{Name, Packet, PacketFlag, ResourceRecord, CLASS, QTYPE, RCODE, TYPE};
+use simple_dns::Name;
 use tokio::net::UdpSocket;
 use tokio::sync::Semaphore;
 
 use super::cache::{cache_ttl, ResponseCache};
+use super::resolve::Reply;
 use super::upstream::Upstream;
 use crate::filter::engine::FilterEngine;
 use crate::stats::ringbuffer::{Stats, Verdict};
@@ -21,7 +25,7 @@ use crate::stats::ringbuffer::{Stats, Verdict};
 /// Maximale Query-Größe über UDP.
 const MAX_QUERY_BYTES: usize = 4096;
 /// Länge des DNS-Headers.
-const HEADER_BYTES: usize = 12;
+pub(super) const HEADER_BYTES: usize = 12;
 
 /// Wie geblockte Namen beantwortet werden.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -61,11 +65,11 @@ pub struct ServerOptions {
 
 /// Der UDP-DNS-Server.
 pub struct DnsServer {
-    options: ServerOptions,
-    engine: Arc<FilterEngine>,
-    upstream: Arc<Upstream>,
-    cache: ResponseCache,
-    stats: Arc<Stats>,
+    pub(super) options: ServerOptions,
+    pub(super) engine: Arc<FilterEngine>,
+    pub(super) upstream: Arc<Upstream>,
+    pub(super) cache: ResponseCache,
+    pub(super) stats: Arc<Stats>,
 }
 
 impl DnsServer {
@@ -126,156 +130,49 @@ impl DnsServer {
         Ok(())
     }
 
+    /// Schickt eine Query durch [`Self::resolve`] und verbucht das Ergebnis.
+    ///
+    /// Reihenfolge wie bisher: geblockte, gecachte und fehlgeschlagene Queries werden vor
+    /// dem Senden gebucht; eine weitergeleitete Antwort erst danach und erst dann in den
+    /// Cache, damit ein voller Cache die Antwort an den Client nicht verzögert.
     async fn handle(&self, socket: &UdpSocket, request: Vec<u8>, peer: SocketAddr) {
-        if request.len() < HEADER_BYTES {
-            self.stats.record_error();
-            self.log(format_args!(
-                "{peer}: paket zu kurz ({} bytes), verworfen",
-                request.len()
-            ));
-            return;
-        }
-        let id = u16::from_be_bytes([request[0], request[1]]);
+        let mut reply = self.resolve(&request, peer).await;
 
-        let packet = match Packet::parse(&request) {
-            Ok(packet) => packet,
-            Err(err) => {
-                self.stats.record_error();
-                self.log(format_args!(
-                    "{peer}: parse fehlgeschlagen ({err}), FORMERR"
-                ));
-                self.send_error(socket, peer, id, RCODE::FormatError).await;
-                return;
-            }
-        };
-        // Antworten anderer Server nehmen wir nicht an (kein Reflection-Loop).
-        if packet.has_flags(PacketFlag::RESPONSE) {
-            self.stats.record_error();
-            self.log(format_args!("{peer}: response statt query ignoriert"));
-            return;
-        }
-        let Some(question) = packet.questions.first() else {
-            self.stats.record_error();
-            self.send_error(socket, peer, id, RCODE::FormatError).await;
-            return;
-        };
-
-        // Name ohne Heap normalisieren: [u8; 256] reicht für jedes DNS-Label-Set.
-        let mut name_buf = [0u8; 256];
-        // Nicht-ASCII (escapete Labels) geht ungefiltert zum Upstream.
-        let name = normalize_qname(&question.qname, &mut name_buf)
-            .and_then(|len| std::str::from_utf8(&name_buf[..len]).ok());
-        let qtype: u16 = question.qtype.into();
-
-        if let Some(name) = name {
-            if self.engine.is_blocked(name) {
-                self.stats.record(name, qtype, Verdict::Blocked);
-                self.log(format_args!("{peer}: {name} -> geblockt"));
-                self.send_sinkhole(socket, peer, id, &packet, question)
-                    .await;
-                return;
-            }
-
-            if let Some(cached) = self.cache.lookup(name, qtype, id) {
-                self.stats.record(name, qtype, Verdict::Cached);
-                self.log(format_args!("{peer}: {name} -> cache-treffer"));
-                if let Err(err) = socket.send_to(&cached, peer).await {
-                    eprintln!("[dns] cache-antwort an {peer} fehlgeschlagen: {err}");
-                }
-                return;
-            }
-        }
-
-        match self.upstream.query(&request, packet.id()).await {
-            Ok(response) => {
-                if let Err(err) = socket.send_to(&response, peer).await {
-                    eprintln!("[dns] antwort an {peer} fehlgeschlagen: {err}");
-                }
-                // Erst nach dem Senden cachen: ein voller Cache darf die Antwort an den
-                // Client weder verzögern noch verhindern.
+        if reply.verdict == Some(Verdict::Forwarded) {
+            self.send(socket, &reply, peer).await;
+            reply.record(&self.stats);
+            if let Some(ttl) = reply.bytes.as_deref().and_then(cache_ttl) {
+                // Name und Bytes getrennt ausleihen bzw. verschieben: der Name zeigt in
+                // `reply.name`, die Antwortbytes gehen ohne Kopie in den Cache.
+                let name = std::str::from_utf8(&reply.name[..reply.name_len]).ok();
                 if let Some(name) = name {
-                    self.stats.record(name, qtype, Verdict::Forwarded);
-                    if let Some(ttl) = cache_ttl(&response) {
-                        self.cache.insert(name, qtype, response, ttl);
+                    if let Some(bytes) = reply.bytes.take() {
+                        self.cache.insert(name, reply.qtype, bytes, ttl);
                     }
-                } else {
-                    self.stats.record_error();
                 }
             }
-            Err(err) => {
-                if let Some(name) = name {
-                    self.stats.record(name, qtype, Verdict::Error);
-                } else {
-                    self.stats.record_error();
-                }
-                self.log(format_args!(
-                    "{peer}: upstream fehlgeschlagen ({err}), SERVFAIL"
-                ));
-                self.send_error(socket, peer, packet.id(), RCODE::ServerFailure)
-                    .await;
-            }
+            return;
+        }
+
+        reply.record(&self.stats);
+        self.send(socket, &reply, peer).await;
+    }
+
+    /// Schickt die Antwortbytes; ein Fehlschlag wird geloggt, nicht weitergegeben.
+    async fn send(&self, socket: &UdpSocket, reply: &Reply, peer: SocketAddr) {
+        let Some(bytes) = reply.bytes.as_ref() else {
+            return;
+        };
+        if let Err(err) = socket.send_to(bytes, peer).await {
+            eprintln!(
+                "[dns] {} an {peer} fehlgeschlagen: {err}",
+                reply.send_label()
+            );
         }
     }
 
-    /// Baut die Sinkhole-Antwort (0.0.0.0 / :: / NXDOMAIN) und schickt sie.
-    async fn send_sinkhole(
-        &self,
-        socket: &UdpSocket,
-        peer: SocketAddr,
-        id: u16,
-        packet: &Packet<'_>,
-        question: &simple_dns::Question<'_>,
-    ) {
-        let mut reply = Packet::new_reply(id);
-        reply.set_flags(PacketFlag::RECURSION_AVAILABLE);
-        if packet.has_flags(PacketFlag::RECURSION_DESIRED) {
-            reply.set_flags(PacketFlag::RECURSION_DESIRED);
-        }
-        reply.questions.push(question.clone());
-
-        match self.options.mode {
-            SinkholeMode::NxDomain => *reply.rcode_mut() = RCODE::NameError,
-            SinkholeMode::ZeroIp => match question.qtype {
-                QTYPE::TYPE(TYPE::A) => reply.answers.push(ResourceRecord::new(
-                    question.qname.clone(),
-                    CLASS::IN,
-                    self.options.sinkhole_ttl,
-                    RData::A(A { address: 0 }),
-                )),
-                QTYPE::TYPE(TYPE::AAAA) => reply.answers.push(ResourceRecord::new(
-                    question.qname.clone(),
-                    CLASS::IN,
-                    self.options.sinkhole_ttl,
-                    RData::AAAA(AAAA { address: 0 }),
-                )),
-                // Andere Typen: leeres NOERROR, damit Clients nicht auf TCP ausweichen.
-                _ => {}
-            },
-        }
-
-        match reply.build_bytes_vec() {
-            Ok(bytes) => {
-                if let Err(err) = socket.send_to(&bytes, peer).await {
-                    eprintln!("[dns] sinkhole-antwort an {peer} fehlgeschlagen: {err}");
-                }
-            }
-            Err(err) => eprintln!("[dns] konnte sinkhole-antwort nicht serialisieren: {err}"),
-        }
-    }
-
-    /// Minimale Fehlerantwort ohne Question-Section.
-    async fn send_error(&self, socket: &UdpSocket, peer: SocketAddr, id: u16, code: RCODE) {
-        let mut reply = Packet::new_reply(id);
-        reply.set_flags(PacketFlag::RECURSION_AVAILABLE);
-        *reply.rcode_mut() = code;
-        if let Ok(bytes) = reply.build_bytes_vec() {
-            if let Err(err) = socket.send_to(&bytes, peer).await {
-                eprintln!("[dns] fehlerantwort an {peer} fehlgeschlagen: {err}");
-            }
-        }
-    }
-
-    fn log(&self, args: std::fmt::Arguments<'_>) {
+    /// Pro-Query-Logging; ohne `verbose` passiert nichts.
+    pub(super) fn log(&self, args: std::fmt::Arguments<'_>) {
         if self.options.verbose {
             eprintln!("[dns] {args}");
         }
@@ -286,7 +183,7 @@ impl DnsServer {
 ///
 /// Gibt die Länge zurück oder `None`, wenn der Name nicht darstellbar ist (zu lang,
 /// Nicht-ASCII). Kein Heap, kein `String`.
-fn normalize_qname(qname: &Name<'_>, out: &mut [u8; 256]) -> Option<usize> {
+pub(super) fn normalize_qname(qname: &Name<'_>, out: &mut [u8; 256]) -> Option<usize> {
     let mut len = 0usize;
     for label in qname.as_bytes() {
         if label.is_empty() {
