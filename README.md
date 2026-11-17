@@ -16,7 +16,7 @@ Web-Framework, kein TLS-Stack, keine Runtime-Abhängigkeiten außer `libc`.
 Das Tier wählt `src/profiler.rs` beim Start anhand von `/proc/meminfo` – die einzige
 Stelle im Code, die RAM-Grenzen kennt.
 
-## Installation auf dem Pi (v0.1.0)
+## Installation auf dem Pi (v0.2.0)
 
 Voraussetzungen: Raspberry Pi OS / Debian **armhf** (hard-float), `curl` für
 `https://`-Blocklisten, Port 53 frei.
@@ -25,13 +25,13 @@ Voraussetzungen: Raspberry Pi OS / Debian **armhf** (hard-float), `curl` für
 
 ```sh
 mkdir -p /tmp/pihole-lite && cd /tmp/pihole-lite
-wget https://github.com/AderLess47/pihole-lite/releases/download/v0.1.0/pihole-lite-armv6
-wget https://github.com/AderLess47/pihole-lite/releases/download/v0.1.0/pihole-lite-armv6.sha256
+wget https://github.com/AderLess47/pihole-lite/releases/download/v0.2.0/pihole-lite-armv6
+wget https://github.com/AderLess47/pihole-lite/releases/download/v0.2.0/pihole-lite-armv6.sha256
 sha256sum -c pihole-lite-armv6.sha256
 ```
 
 Erwartet: `pihole-lite-armv6: OK`. Die Prüfsumme des Release-Assets ist
-`8df6b6c192b84707446b83143b5027b2b4a4e4264e4de147dc6f8ba968388637` (818.440 Bytes,
+`6244e33b4b4e49b984b68e0317551bb6eb08a7f2773ea1360242867f2ddd1499` (818.440 Bytes,
 `ELF 32-bit LSB pie executable, ARM, EABI5`, hard-float, gestrippt). Das Binary ist eine
 einzelne Datei, dynamisch gegen glibc gelinkt; das neueste benötigte Symbol ist
 `GLIBC_2.34`. Es läuft damit auf Raspberry Pi OS Bookworm (auch dem 32-Bit-Image für
@@ -74,7 +74,7 @@ journalctl -u pihole-lite -f
 Im Journal steht der Startbanner mit Tier, Domain-Anzahl, Listener und Upstreams:
 
 ```
-pihole-lite 0.1.0
+pihole-lite 0.2.0
   hardware : 246 MiB RAM (180 MiB frei), 1 Kern(e), 1 Worker
   tier     : Tier 1 (Nano) -> nanohash (sorted xxh3-64)
   filter   : 61234 domains, ~512 KiB heap
