@@ -10,6 +10,27 @@ lauten.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-17
+
+### Fixed
+
+- Das Release-Binary weist jetzt `Tag_CPU_arch: v6`, `Tag_FP_arch: VFPv2` und
+  `Thumb-1` aus. Bisher kamen die crt-Objekte, libgcc und Teile der libc von der
+  Debian-armhf-Toolchain, deren Baseline ARMv7 + VFPv3 ist; das Binary behauptete
+  damit `v7`, `Thumb-2` und `VFPv3-D16` und versprach dem Pi 1 eine CPU, die er
+  nicht ist.
+- Der ARMv6-Job linkt über einen Linker-Wrapper gegen den Raspbian-Sysroot: er
+  setzt `--sysroot`, `-B` für die crt-Objekte und `-L` für libgcc vor die
+  Argumente von rustc. Ein `-L` aus `RUSTFLAGS` stand zu spät in der Linkerzeile
+  und griff für `-lgcc_s` nicht; ein `-B` auf das gcc-Verzeichnis zog zusätzlich
+  die ARM-`collect2` in den Suchpfad und scheiterte unter x86 mit `Exec format
+  error`.
+- Die Sysroot-Variable im Job heißt `ARM_SYSROOT`. Stand `SYSROOT` in der
+  Umgebung, bevor die Toolchain installiert war, fand `rustc` für das eigene
+  Crate kein `std` mehr, obwohl `rust-std` installiert war.
+- Der Job prüft die Attribute selbst: fehlt `Tag_CPU_arch: v6` oder
+  `Tag_FP_arch: VFPv2`, bricht der Build ab; die glibc-Baseline bleibt bei 2.36.
+
 ## [0.2.0] - 2026-11-17
 
 ### Changed
@@ -58,6 +79,7 @@ lauten.
   nicht gestartet; ein CI-Guard bricht jetzt ab, sobald ein Symbol neuer als die
   Baseline ist.
 
-[Unreleased]: https://github.com/AderLess47/pihole-lite/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/AderLess47/pihole-lite/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/AderLess47/pihole-lite/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/AderLess47/pihole-lite/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/AderLess47/pihole-lite/releases/tag/v0.1.0
