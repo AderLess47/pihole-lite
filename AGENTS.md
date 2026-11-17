@@ -26,7 +26,7 @@ gemessen, nicht an Bequemlichkeit.
    Konstanten.
 8. **Modulstruktur bleibt:** `config.rs` (Defaults, TOML, CLI-Flags), `dns/` (server,
    upstream, cache), `filter/` (engine, gravity), `stats/` (ringbuffer), `web/` (api,
-   static). Prioritäten und Bereichsprüfungen der Konfiguration stehen ausschließlich in
+   static). Präzedenz und Bereichsprüfungen der Konfiguration stehen ausschließlich in
    `config.rs`; `main.rs` verdrahtet nur.
 
 ## Statistik & API
