@@ -10,6 +10,22 @@ lauten.
 
 ## [Unreleased]
 
+### Changed
+
+- CLI- und TOML-Auswertung liegt in `config.rs`: Defaults, Präzedenz und
+  Bereichsprüfungen an einer Stelle, `main.rs` verdrahtet nur noch.
+- Preload und Update teilen sich einen Aufbau (`Rebuild`), damit lokale Dateien
+  und Inline-Domains in beiden Wegen gleich behandelt werden; `main` muss nach
+  `preload` nichts mehr nachtragen.
+- Die Query-Entscheidung liegt in `dns/resolve.rs`: `resolve` liefert ein `Reply`
+  mit Bytes, Verdict und dem Namen im Puffer, der Socket-Loop sendet und bucht.
+- Filter und Abschaltung bekommen die Zeit als Parameter (`now` aus
+  `now_seconds()`) statt sie im Entscheid zu lesen; damit ist der Ablauf einer
+  Abschaltung ohne Warten testbar.
+- Der Gravity-Updater ist in echte Module unter `filter/gravity/` geschnitten
+  (`update`, `rebuild`, `stream`, `source`, `cache`, `http`) statt in per
+  `include!` eingebundene Fragmente.
+
 ## [0.1.0] - 2026-11-16
 
 ### Added
