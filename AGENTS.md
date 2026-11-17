@@ -1,7 +1,7 @@
 # AGENTS.md – Architektur-Regeln für pihole-lite
 
 Ziel: ein DNS-Sinkhole, das auf einem Raspberry Pi 1 (ARMv6, 256 MB RAM) unter **15 MB RSS**
-làuft und auf größeren Systemen automatisch skaliert. Jede Änderung wird an diesem Ziel
+läuft und auf größeren Systemen automatisch skaliert. Jede Änderung wird an diesem Ziel
 gemessen, nicht an Bequemlichkeit.
 
 ## Harte Regeln
@@ -26,7 +26,7 @@ gemessen, nicht an Bequemlichkeit.
    Konstanten.
 8. **Modulstruktur bleibt:** `config.rs` (Defaults, TOML, CLI-Flags), `dns/` (server,
    upstream, cache), `filter/` (engine, gravity), `stats/` (ringbuffer), `web/` (api,
-   static). Präzedenz und Bereichsprüfungen der Konfiguration stehen ausschließlich in
+   static). Prioritäten und Bereichsprüfungen der Konfiguration stehen ausschließlich in
    `config.rs`; `main.rs` verdrahtet nur.
 
 ## Statistik & API
