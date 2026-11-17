@@ -42,6 +42,17 @@ einzige, per `include_str!` eingebettete HTML-Datei mit Inline-CSS/-JS: kein Ass
 kein Build-Schritt, keine CDN-Abhängigkeit. Der Endpunkt bindet standardmäßig auf
 `127.0.0.1`, weil der Disable-Switch keine Authentifizierung hat.
 
+## DNS-Pfad
+
+`dns/server.rs` trennt Entscheidung und I/O: `resolve(&self, &[u8]) -> Reply` parst, filtert,
+prüft den Cache und fragt den Upstream – ohne Socket und ohne Statistik. Der Socket-Loop
+sendet die Bytes aus dem `Reply` und bucht das Verdict. Der Name entsteht direkt im Puffer
+des `Reply` (`normalize_qname`), damit auch dieser Pfad ohne Heap pro Query bleibt.
+Reihenfolge im Loop: geblockt/gecacht/Fehler werden vor dem Senden gebucht, eine
+weitergeleitete Antwort danach und erst dann in den Cache – so verzögert ein voller Cache
+die Antwort an den Client nicht. Neue Fälle gehören als Verdict in `resolve`, nicht als
+Verzweigung in den Loop.
+
 ## Antwort-Cache
 
 `dns/cache.rs` hält rohe Antworten im LRU; die Kapazität kommt aus dem Tier (512 / 4096 /
