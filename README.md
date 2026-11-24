@@ -16,6 +16,18 @@ Web-Framework, kein TLS-Stack, keine Runtime-Abhängigkeiten außer `libc`.
 Das Tier wählt `src/profiler.rs` beim Start anhand von `/proc/meminfo` – die einzige
 Stelle im Code, die RAM-Grenzen kennt.
 
+## Eigenständigkeit
+
+pihole-lite ist ein eigenständiges Projekt und bleibt es: Der Kern hat keine
+Verbindung zu einem VPN- oder HubGuard-Backend, es gibt keinen geteilten Code,
+keine gemeinsamen Secrets und keine Abo-, Billing- oder Entitlement-Logik. Auch
+VPN-spezifische Routing-Regeln gehören nicht in den DNS-Pfad.
+
+Eine Anbindung an ein VPN-Abo ist ausschließlich optional und lose gekoppelt –
+über die vorhandene Konfiguration (`config.toml`, CLI-Flags) oder die lokale
+HTTP-API. Wer pihole-lite ohne VPN betreibt, muss dafür nichts ändern; wer es
+buchbar anbinden will, baut die Verbindung außerhalb dieses Repos.
+
 ## Installation auf dem Pi (v0.2.1)
 
 Voraussetzungen: Raspberry Pi OS / Debian **armhf** (hard-float), `curl` für
