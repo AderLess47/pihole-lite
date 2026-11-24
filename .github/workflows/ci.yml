@@ -432,3 +432,16 @@ jobs:
             pihole-lite-armv6
             pihole-lite-armv6.sha256
           fail_on_unmatched_files: true
+
+  # Sichert die im README zugesagte Eigenständigkeit technisch ab: kein
+  # VPN-/HubGuard-/Abo-/Billing-Begriff im getrackten Code und keine
+  # Abhängigkeit auf eine fremde Git-/Pfad-Quelle.
+  independence:
+    name: Eigenständigkeit (Code und Cargo)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Kopplungs-Check
+        run: python3 scripts/check_independence.py

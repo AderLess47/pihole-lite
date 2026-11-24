@@ -28,6 +28,11 @@ Eine Anbindung an ein VPN-Abo ist ausschließlich optional und lose gekoppelt �
 HTTP-API. Wer pihole-lite ohne VPN betreibt, muss dafür nichts ändern; wer es
 buchbar anbinden will, baut die Verbindung außerhalb dieses Repos.
 
+Der CI-Job `independence` prüft diese Zusage: Er schlägt fehl, sobald im
+getrackten Code oder in den Cargo-Dateien VPN-, HubGuard-, Abo- oder
+Billing-Begriffe auftauchen oder eine Abhängigkeit auf eine fremde Git-/Pfad-
+Quelle zeigt.
+
 ## Installation auf dem Pi (v0.2.1)
 
 Voraussetzungen: Raspberry Pi OS / Debian **armhf** (hard-float), `curl` für
